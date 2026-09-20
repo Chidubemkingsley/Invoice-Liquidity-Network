@@ -15054,7 +15054,7 @@ snapshots:
       lodash.merge: 4.6.2
       lodash.uniq: 4.5.0
       resolve-from: 5.0.0
-      ts-node: 10.9.2(@types/node@20.5.1)(typescript@5.9.3)
+      ts-node: 10.9.2(@types/node@20.19.43)(typescript@5.9.3)
       typescript: 5.9.3
     transitivePeerDependencies:
       - '@swc/core'
@@ -18461,7 +18461,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@20.5.1)(@vitest/coverage-v8@4.1.10)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.15.0(@types/node@20.5.1)(typescript@5.9.3))(vite@8.0.16(@types/node@20.5.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
+      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(@vitest/coverage-v8@4.1.10)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.15.0(@types/node@20.19.43)(typescript@5.9.3))(vite@8.0.16(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
 
   '@vitest/coverage-v8@4.1.11(vitest@4.1.10)':
     dependencies:
@@ -19663,7 +19663,7 @@ snapshots:
     dependencies:
       '@types/node': 20.5.1
       cosmiconfig: 8.3.6(typescript@5.9.3)
-      ts-node: 10.9.2(@types/node@20.5.1)(typescript@5.9.3)
+      ts-node: 10.9.2(@types/node@20.19.43)(typescript@5.9.3)
       typescript: 5.9.3
 
   cosmiconfig@6.0.0:

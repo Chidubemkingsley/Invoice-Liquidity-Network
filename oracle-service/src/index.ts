@@ -422,17 +422,13 @@ export type {
   OracleServiceOptions,
   OracleSignalComposition,
   OracleVerificationRequest,
-} from './types';
-export { composeVerdict, COMPOSITION_POLICY_VERSION } from './composition';
-export { assessOracleRequest, normalizeAmountToNumber, normalizeTimestampToMs } from './verifier';
-  OracleServiceOptions,
-  OracleVerificationRequest,
   OracleVerificationResponse,
   KYBVerificationResult,
   VerificationProvider,
   ReputationSnapshot,
   IndexerInvoiceHistoryEntry,
 } from './types';
+export { composeVerdict, COMPOSITION_POLICY_VERSION } from './composition';
 export {
   OracleVerifier,
   assessOracleRequest,

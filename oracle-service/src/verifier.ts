@@ -520,15 +520,12 @@ export class OracleVerifier {
     };
     let indexerAvailable = true;
 
-    const [historyResult, reputationResult, externalResult] = await Promise.allSettled([
+    const [historyResult, reputationResult, externalResult, kybResult] = await Promise.allSettled([
       this.historyProvider(request.payer),
       this.reputationProvider(request.payer),
       this.externalProvider
         ? this.externalProvider(request.payer)
         : Promise.resolve(undefined),
-    const [historyResult, reputationResult, kybResult] = await Promise.allSettled([
-      this.historyProvider(request.payer),
-      this.reputationProvider(request.payer),
       this.kybProvider ? this.kybProvider.verifyPayer(request.payer) : Promise.resolve(undefined),
     ]);
 
@@ -580,7 +577,6 @@ export class OracleVerifier {
       hasRecentActivity(history, nowMs)
     );
 
-    await this.cache?.set(cacheKey, response, ttlSeconds);
     // Add evidence when indexer is unavailable
     if (!indexerAvailable) {
       response.evidence.push(
@@ -588,7 +584,7 @@ export class OracleVerifier {
       );
     }
 
-    await this.cache?.set(cacheKey, response, this.cacheTtlSeconds);
+    await this.cache?.set(cacheKey, response, ttlSeconds);
     return response;
   }
 }
