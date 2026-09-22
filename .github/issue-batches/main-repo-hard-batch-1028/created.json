@@ -1,0 +1,502 @@
+{
+  "Add SLSA provenance generation to the release pipeline": {
+    "number": 1077,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1077"
+  },
+  "Add a caching layer with explicit invalidation for the indexer's highest-traffic documented queries": {
+    "number": 1129,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1129"
+  },
+  "Add a contract-level integration test suite verifying SDK behavior against every documented ABI entry": {
+    "number": 1089,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1089"
+  },
+  "Add a cross-repo contract test suite verifying SDK/deployed-ABI compatibility on every release": {
+    "number": 1094,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1094"
+  },
+  "Add a dead-letter queue and replay tooling for malformed indexer events": {
+    "number": 1047,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1047"
+  },
+  "Add a queryable delivery-confirmation audit log to notifications": {
+    "number": 1063,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1063"
+  },
+  "Add a scheduled indexed-state reconciliation job comparing indexer state against live contract state": {
+    "number": 1044,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1044"
+  },
+  "Add a worst-case liquidity stress-test appendix to docs/protocol-economics.md": {
+    "number": 1114,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1114"
+  },
+  "Add an offline/degraded-network write queue to the SDK for unreachable Soroban RPC endpoints": {
+    "number": 1036,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1036"
+  },
+  "Add an upstream-outage chaos test for oracle-service to CI": {
+    "number": 1058,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1058"
+  },
+  "Add anomalous-voting-pattern alerting to the governance-monitor example": {
+    "number": 1125,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1125"
+  },
+  "Add automated data-loss detection that would have caught past near-miss incidents": {
+    "number": 1108,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1108"
+  },
+  "Add canary releases with automated rollback on SLO regression for indexer/oracle-service/notifications": {
+    "number": 1095,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1095"
+  },
+  "Add deterministic pre/post-release transaction-simulation diffing to catch SDK behavior drift": {
+    "number": 1038,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1038"
+  },
+  "Add distributed tracing across the indexer \u2192 oracle-service \u2192 notifications request path": {
+    "number": 1067,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1067"
+  },
+  "Add exponential backoff and a dead-letter queue for permanently-failing notification channels": {
+    "number": 1060,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1060"
+  },
+  "Add idempotency and dry-run mode to contract-deployer for safe re-runs against a live network": {
+    "number": 1148,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1148"
+  },
+  "Add manipulation-resistant bounds on maximum single-update price movement in oracle-service": {
+    "number": 1052,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1052"
+  },
+  "Add multi-channel fanout with independent per-channel retry state to notifications": {
+    "number": 1061,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1061"
+  },
+  "Add multi-endpoint Soroban RPC failover with health scoring to the SDK": {
+    "number": 1032,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1032"
+  },
+  "Add per-recipient rate-limiting to notifications to prevent storm cascades": {
+    "number": 1062,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1062"
+  },
+  "Add property-based fuzz testing for indexer event-processing logic": {
+    "number": 1090,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1090"
+  },
+  "Add request batching and deduplication for SDK consumers issuing many near-simultaneous reads": {
+    "number": 1130,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1130"
+  },
+  "Add resumable checkpointing for indexer backfill-from-genesis": {
+    "number": 1040,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1040"
+  },
+  "Add retry/backoff with jitter and a circuit breaker for transient Soroban RPC failures in the SDK": {
+    "number": 1031,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1031"
+  },
+  "Add staleness detection with automatic circuit-breaking to oracle-service": {
+    "number": 1050,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1050"
+  },
+  "Analyze Dutch-auction funding edge cases under thin-liquidity conditions": {
+    "number": 1123,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1123"
+  },
+  "Analyze protocol behavior if the chosen settlement-anchor partner experiences an outage or insolvency event": {
+    "number": 1127,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1127"
+  },
+  "Audit all outbound notification templates for template-injection vulnerabilities": {
+    "number": 1065,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1065"
+  },
+  "Audit and enforce log-correlation ID propagation across all services": {
+    "number": 1074,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1074"
+  },
+  "Audit and prune existing alert rules against real incident history": {
+    "number": 1071,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1071"
+  },
+  "Audit and reduce cross-service payload over-fetching between indexer, oracle-service, and notifications": {
+    "number": 1135,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1135"
+  },
+  "Audit backup retention and encryption-at-rest for all indexer and oracle-service persisted data": {
+    "number": 1110,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1110"
+  },
+  "Audit cold-start latency for notifications and oracle-service serverless/worker deployment targets": {
+    "number": 1131,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1131"
+  },
+  "Audit database connection pooling and query plans for the indexer under sustained mainnet-scale write load": {
+    "number": 1132,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1132"
+  },
+  "Audit docs/api-collection.md for completeness against every actually-exposed endpoint": {
+    "number": 1112,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1112"
+  },
+  "Audit docs/glossary.md for cross-repo terminology consistency": {
+    "number": 1117,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1117"
+  },
+  "Audit semantic-release configuration for changelog/version-bump accuracy across all publishable packages": {
+    "number": 1101,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1101"
+  },
+  "Audit service-to-service credentials and cloud IAM roles for least-privilege": {
+    "number": 1083,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1083"
+  },
+  "Audit the analytics pipeline for query-load isolation from production traffic": {
+    "number": 1136,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1136"
+  },
+  "Audit the pnpm workspace for dependency-confusion and typosquatting exposure": {
+    "number": 1076,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1076"
+  },
+  "Audit workers/ cost and concurrency configuration against actual mainnet-projected load": {
+    "number": 1134,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1134"
+  },
+  "Automate zero-downtime secrets rotation for all service credentials": {
+    "number": 1075,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1075"
+  },
+  "Build a backward-compatibility test matrix for the SDK against its last three minor releases' consumers": {
+    "number": 1035,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1035"
+  },
+  "Build a chaos-engineering harness for network partitions between services": {
+    "number": 1086,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1086"
+  },
+  "Build a per-service cost-attribution dashboard": {
+    "number": 1073,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1073"
+  },
+  "Build a third-party data-processor inventory and data-processing-agreement gap audit": {
+    "number": 1144,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1144"
+  },
+  "Build a zero-downtime schema-migration safety harness for the indexer": {
+    "number": 1041,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1041"
+  },
+  "Build an automated API-versioning compatibility checker into CI": {
+    "number": 1100,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1100"
+  },
+  "Build an automated verification harness asserting SDK code matches the documented trust model": {
+    "number": 1037,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1037"
+  },
+  "Build an immutable, append-only historical price audit trail for oracle-service": {
+    "number": 1055,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1055"
+  },
+  "Close remaining gaps from docs/secrets-baseline-audit.md with automated pre-commit enforcement": {
+    "number": 1081,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1081"
+  },
+  "Close the highest-risk gaps identified in docs/cli-function-level-audit.md": {
+    "number": 1145,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1145"
+  },
+  "Close type-generation drift between SDK request/response shapes and packages/ generated types": {
+    "number": 1033,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1033"
+  },
+  "Complete the CLI vs cli-next migration audit ensuring no functionality is stranded": {
+    "number": 1120,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1120"
+  },
+  "Define and automate an escalation policy for high-severity dependency-audit findings": {
+    "number": 1152,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1152"
+  },
+  "Define and implement a degraded-mode fallback for notifications when a downstream provider is down": {
+    "number": 1066,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1066"
+  },
+  "Define and test a fallback path for KYB-provider unavailability": {
+    "number": 1138,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1138"
+  },
+  "Define oracle-service's degraded-mode contract when it is fully unavailable": {
+    "number": 1057,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1057"
+  },
+  "Define the sanctions/OFAC screening integration point for the settlement-anchor partner flow": {
+    "number": 1143,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1143"
+  },
+  "Design a CDN/edge-caching strategy for the indexer's public read API": {
+    "number": 1133,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1133"
+  },
+  "Design and implement a right-to-erasure request-handling process for notification/account data": {
+    "number": 1142,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1142"
+  },
+  "Design and launch a bug bounty program": {
+    "number": 1080,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1080"
+  },
+  "Design and validate a horizontal read-replica strategy for the indexer": {
+    "number": 1045,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1045"
+  },
+  "Eliminate remaining mocked fixtures identified in docs/sdk-integration-fixture-audit.md": {
+    "number": 1093,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1093"
+  },
+  "Enforce postmortem-filing SLA after each incident": {
+    "number": 1106,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1106"
+  },
+  "Enforce query-performance budgets for the indexer's heaviest documented queries": {
+    "number": 1046,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1046"
+  },
+  "Enforce semver-breaking-change detection on the SDK's public API surface": {
+    "number": 1029,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1029"
+  },
+  "Execute a full indexer backup/restore drill against a production-sized snapshot and record real RTO/RPO": {
+    "number": 1103,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1103"
+  },
+  "Expand docs/troubleshooting.md driven by actual support/incident history": {
+    "number": 1149,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1149"
+  },
+  "Expand e2e test scope to cover the full disaster-recovery restore path": {
+    "number": 1088,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1088"
+  },
+  "Expand monorepo-map drift enforcement to catch undocumented new services/packages": {
+    "number": 1099,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1099"
+  },
+  "Expand mutation-testing coverage to indexer and oracle-service critical paths": {
+    "number": 1085,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1085"
+  },
+  "Expand package validation to catch version-skew between the published SDK and its documented peer-dependency ranges": {
+    "number": 1153,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1153"
+  },
+  "Expand synthetic canary coverage beyond liveness to full critical user-facing paths": {
+    "number": 1070,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1070"
+  },
+  "Expand test-runtime budget enforcement to the full monorepo": {
+    "number": 1092,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1092"
+  },
+  "Extend delegation-cycle and vote-buying resistance analysis beyond the existing max-10-hops protection": {
+    "number": 1122,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1122"
+  },
+  "Extend indexer bulk-export resource-exhaustion protections to streaming pagination": {
+    "number": 1042,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1042"
+  },
+  "Extend the load-test harness to a realistic mainnet traffic shape, not synthetic uniform load": {
+    "number": 1091,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1091"
+  },
+  "Finalize a unified Grafana dashboard tying together indexer, oracle-service, and notifications metrics": {
+    "number": 1069,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1069"
+  },
+  "Guarantee at-least-once notification delivery with dedup keys": {
+    "number": 1059,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1059"
+  },
+  "Guarantee indexer idempotency under duplicate and out-of-order event delivery": {
+    "number": 1043,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1043"
+  },
+  "Guarantee tamper-evidence for all compliance-relevant audit logs": {
+    "number": 1141,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1141"
+  },
+  "Harden account-seeder for realistic multi-actor mainnet-shaped test scenarios": {
+    "number": 1147,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1147"
+  },
+  "Harden coordinated cross-repo releases for partial-failure rollback": {
+    "number": 1098,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1098"
+  },
+  "Harden externally-exposed indexer and oracle-service endpoints against abuse with rate limiting": {
+    "number": 1082,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1082"
+  },
+  "Harden no-duplicate-types and no-foreign-lockfiles checks against new bypass patterns": {
+    "number": 1151,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1151"
+  },
+  "Harden oracle-service signed-update verification with key rotation and replay protection": {
+    "number": 1053,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1053"
+  },
+  "Harden the docs-link-check and cli-docs pipelines against silent partial failures": {
+    "number": 1102,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1102"
+  },
+  "Harden the flaky-test quarantine process with automatic re-quarantine on repeat flake": {
+    "number": 1087,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1087"
+  },
+  "Implement automated scheduled deletion enforcing docs/privacy.md's documented retention windows": {
+    "number": 1139,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1139"
+  },
+  "Implement chain-reorg detection and rollback in the indexer": {
+    "number": 1039,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1039"
+  },
+  "Implement the highest-impact optimizations identified in docs/ci-duration-cost-audit.md": {
+    "number": 1097,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1097"
+  },
+  "Instrument oracle-service latency SLOs and feed into the unified metrics dashboard": {
+    "number": 1054,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1054"
+  },
+  "Link every paging alert directly to its docs/incident-response.md runbook section": {
+    "number": 1072,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1072"
+  },
+  "Load-test notifications at 10x current peak volume": {
+    "number": 1064,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1064"
+  },
+  "Load-test oracle-service at realistic mainnet update frequency": {
+    "number": 1056,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1056"
+  },
+  "Model and document the protocol's response to invoice default/non-payment scenarios": {
+    "number": 1128,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1128"
+  },
+  "Model low-turnout quorum-manipulation attack scenarios against current governance thresholds": {
+    "number": 1121,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1121"
+  },
+  "Prepare the mainnet-cutover community announcement, coordinated across all three repos": {
+    "number": 1116,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1116"
+  },
+  "Produce and rehearse a multi-region indexer failover plan": {
+    "number": 1048,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1048"
+  },
+  "Reconcile docs/architecture.md against the current actual service topology": {
+    "number": 1113,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1113"
+  },
+  "Refresh the formal threat model to incorporate oracle-manipulation and indexer-reorg attack classes": {
+    "number": 1084,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1084"
+  },
+  "Replace ad hoc thrown errors in the SDK with a typed error taxonomy matching docs/errors.md": {
+    "number": 1030,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1030"
+  },
+  "Replace simple-threshold alerts with multi-window multi-burn-rate SLO alerting": {
+    "number": 1068,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1068"
+  },
+  "Replace single-source oracle trust with multi-source aggregation and outlier rejection": {
+    "number": 1049,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1049"
+  },
+  "Require documented impact analysis before any governance-changeable protocol constant is modified": {
+    "number": 1126,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1126"
+  },
+  "Resolve or justify every remaining knip-flagged export": {
+    "number": 1150,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1150"
+  },
+  "Review cross-border data-residency implications given the trust-liquidity model's target market": {
+    "number": 1140,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1140"
+  },
+  "Run a cross-repo incident-escalation drill validating runbook routing between all three repos": {
+    "number": 1109,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1109"
+  },
+  "Run a multi-service outage game-day simulating simultaneous indexer and oracle-service failure": {
+    "number": 1105,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1105"
+  },
+  "Run an RFC-process retrospective auditing whether major recent decisions actually went through it": {
+    "number": 1119,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1119"
+  },
+  "Run an RPC-node dependency failure drill validating protocol behavior when the primary Soroban RPC provider is unreachable": {
+    "number": 1107,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1107"
+  },
+  "Run the auditor-onboarding package as a dry run with an external reviewer": {
+    "number": 1111,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1111"
+  },
+  "Run the emergency-pause rehearsal end-to-end and document real timings": {
+    "number": 1104,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1104"
+  },
+  "Scope and plan a third-party penetration test with a remediation-tracking process": {
+    "number": 1079,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1079"
+  },
+  "Set and enforce a per-entry-point bundle-size regression budget for the SDK": {
+    "number": 1034,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1034"
+  },
+  "Stress-test liquidity-pool behavior under simultaneous large-withdrawal scenarios": {
+    "number": 1124,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1124"
+  },
+  "Turn docs/release-runbook.md's manual steps into a scripted, auditable release pipeline": {
+    "number": 1096,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1096"
+  },
+  "Update the SCF technical narrative to reflect mainnet-readiness work completed since the last hardening batch": {
+    "number": 1115,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1115"
+  },
+  "Validate docs/integration-guide.md by having a real external integrator follow it cold": {
+    "number": 1118,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1118"
+  },
+  "Validate docs/local-development.md by having a fresh contributor follow it cold": {
+    "number": 1146,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1146"
+  },
+  "Verify actual data retention matches docs/privacy.md's documented policy, not just aspirational intent": {
+    "number": 1137,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1137"
+  },
+  "Verify reproducible builds for SDK and CLI release artifacts": {
+    "number": 1078,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1078"
+  },
+  "Write and automate an oracle-service source-failover runbook": {
+    "number": 1051,
+    "url": "https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/issues/1051"
+  }
+}

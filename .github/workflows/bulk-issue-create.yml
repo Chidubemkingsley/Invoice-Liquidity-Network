@@ -1,0 +1,70 @@
+name: Bulk Issue Create
+
+on:
+  workflow_dispatch:
+    inputs:
+      template_path:
+        description: 'Path to the Markdown template file (relative to repo root)'
+        required: true
+      csv_path:
+        description: 'Path to the CSV data file (relative to repo root)'
+        required: true
+      target_repo:
+        description: 'owner/repo to create issues in (defaults to this repo)'
+        required: false
+        default: ''
+      live:
+        description: 'Actually create issues. Leave unchecked for a dry-run preview that makes no API calls.'
+        required: true
+        default: false
+        type: boolean
+
+# Least-privilege: this workflow only needs to create issues in this repo by
+# default. Creating issues in a *different* ILN repo requires a PAT with
+# access to that repo, supplied via the BULK_ISSUE_CREATE_PAT secret
+# (falls back to GITHUB_TOKEN, same pattern as project-board.yml's PROJECT_PAT).
+permissions:
+  issues: write
+
+jobs:
+  bulk-create:
+    name: Bulk-create issues from template + CSV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs exist
+        run: |
+          test -f "${{ inputs.template_path }}" || { echo "::error::Template not found: ${{ inputs.template_path }}"; exit 1; }
+          test -f "${{ inputs.csv_path }}" || { echo "::error::CSV not found: ${{ inputs.csv_path }}"; exit 1; }
+
+      - name: Run bulk-create-issues.py
+        id: run
+        env:
+          GH_TOKEN: ${{ secrets.BULK_ISSUE_CREATE_PAT || secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ inputs.target_repo != '' && inputs.target_repo || github.repository }}
+        run: |
+          ARGS=(--template "${{ inputs.template_path }}" --csv "${{ inputs.csv_path }}" --repo "$TARGET_REPO")
+          if [ "${{ inputs.live }}" = "true" ]; then
+            ARGS+=(--live)
+          fi
+          python3 scripts/bulk-create-issues.py "${ARGS[@]}" | tee run.log
+          {
+            echo "## Bulk issue create"
+            echo ""
+            echo "Repo: \`$TARGET_REPO\`"
+            echo "Mode: $( [ "${{ inputs.live }}" = "true" ] && echo 'LIVE' || echo 'dry-run (no issues created)' )"
+            echo ""
+            echo '```'
+            tail -5 run.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload progress state as artifact
+        if: always() && inputs.live == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulk-issue-create-state
+          path: '**/created.*.json'
+          if-no-files-found: warn

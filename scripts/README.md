@@ -64,3 +64,4 @@ Tests mock `spawnSync` to avoid network access and verify argument construction,
 | `load-test-notifications.ts` | Notifications service load testing. |
 | `profile.ts` | Performance profiling utility. |
 | `verify-deployment.ts` | Post-deployment verification checks. |
+| `bulk-create-issues.py` | Bulk-creates GitHub issues from a mustache-style Markdown template + RFC 4180 CSV data. Defaults to a dry-run preview; pass `--live` to actually create issues. Backs the `Bulk Issue Create` workflow (`.github/workflows/bulk-issue-create.yml`). |
