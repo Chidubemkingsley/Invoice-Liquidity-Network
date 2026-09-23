@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { randomBytes } from 'crypto';
 import { RateLimiter } from './rate-limiter';
+import { traceMiddleware } from '@iln/opentelemetry';
 import {
   createSubscription,
   deleteSubscriptionByAddressAndDestination,
@@ -64,6 +65,7 @@ function applyRateLimit(req: Request, res: Response, next: NextFunction): void {
 
 export function createApp() {
   const app = express();
+  app.use(traceMiddleware('notifications'));
   app.use(express.json());
 
   app.get('/health', (_req: Request, res: Response) => {

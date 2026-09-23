@@ -1,8 +1,8 @@
 import type { Server } from 'node:http';
 
-import express, { type Request, type Response } from 'express';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { Address } from '@stellar/stellar-sdk';
+import { traceMiddleware, withSpan, propagateFetch } from '@iln/opentelemetry';
 
 import { createOracleCache } from './cache';
 import { createOracleMetrics } from './metrics';
@@ -70,12 +70,15 @@ function createRateLimitMiddleware(
 }
 
 async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-    },
-    signal: createAbortSignal(timeoutMs),
-  });
+  const response = await fetch(
+    url,
+    propagateFetch({
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: createAbortSignal(timeoutMs),
+    } as any),
+  );
 
   if (!response.ok) {
     throw new Error(`Request failed with status ${response.status}`);
@@ -238,6 +241,8 @@ export async function createOracleApp(
 
   const app = express();
   app.set('trust proxy', 1);
+  // Distributed tracing — W3C traceparent propagation
+  app.use(traceMiddleware('oracle-service'));
 
   // Apply rate limiting middleware if enabled
   if (resolved.enableRateLimit) {
@@ -323,15 +328,20 @@ export async function createOracleApp(
     const start = process.hrtime.bigint();
 
     try {
-      const response = await verifier.verify({
-        payer,
-        amount,
-        invoiceId,
-        requestId: typeof body.requestId === 'string' ? body.requestId : undefined,
-        forceRefresh: parseVerifiedBoolean(body.forceRefresh),
-        maxOracleAgeMs:
-          typeof body.maxOracleAgeMs === 'number' ? body.maxOracleAgeMs : resolved.maxOracleAgeMs,
-      });
+      const response = await withSpan(
+        'oracle.verify',
+        { payer: payer.slice(0, 8), invoiceId: String(invoiceId) },
+        async () =>
+          verifier.verify({
+            payer,
+            amount,
+            invoiceId,
+            requestId: typeof body.requestId === 'string' ? body.requestId : undefined,
+            forceRefresh: parseVerifiedBoolean(body.forceRefresh),
+            maxOracleAgeMs:
+              typeof body.maxOracleAgeMs === 'number' ? body.maxOracleAgeMs : resolved.maxOracleAgeMs,
+          }),
+      );
 
       metrics.verificationDuration.observe(Number(process.hrtime.bigint() - start) / 1e9);
       if (response.cacheHit) {

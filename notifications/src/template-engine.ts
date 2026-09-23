@@ -1,3 +1,5 @@
+import { escapeHtml, escapeDiscordMarkdown, escapeSmsText } from './templates/helpers';
+
 export interface TemplateContext {
   invoice?: {
     id: number;
@@ -43,10 +45,12 @@ export interface TemplateTestResult {
   errors?: string[];
 }
 
+export type EscapeContext = 'html' | 'discord' | 'sms' | 'json' | 'none';
+
 export class TemplateEngine {
   private templates: Map<string, Template>;
-  private variableRegex = /\{\{(\w+)\}\}/g;
-  private conditionalRegex = /\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}/gs;
+  private variableRegex = /\{\{([\w\.]+)\}\}/g;
+  private conditionalRegex = /\{%\s*if\s+([\w\.]+)\s*%\}(.*?)\{%\s*endif\s*%\}/gs;
 
   constructor() {
     this.templates = new Map();
@@ -149,9 +153,12 @@ Please make payment immediately to avoid default.`,
   }
 
   /**
-   * Render a template with given context
+   * Render a template with given context.
+   * @param escapeContext - output context that determines escaping. Defaults to 'html' for
+   * safety; callers rendering SMS/Discord/JSON should pass the correct context so
+   * interpolation is escaped appropriately. 'none' is only for internal trusted roots.
    */
-  render(templateId: string, context: TemplateContext): RenderResult {
+  render(templateId: string, context: TemplateContext, escapeContext: EscapeContext = 'html'): RenderResult {
     const template = this.templates.get(templateId);
     if (!template) {
       return {
@@ -165,8 +172,8 @@ Please make payment immediately to avoid default.`,
     const errors: string[] = [];
 
     try {
-      const subject = this.processTemplate(template.subject, context);
-      const body = this.processTemplate(template.body, context);
+      const subject = this.processTemplate(template.subject, context, escapeContext);
+      const body = this.processTemplate(template.body, context, escapeContext);
 
       return {
         subject,
@@ -187,14 +194,14 @@ Please make payment immediately to avoid default.`,
   /**
    * Process template string with variable interpolation and conditionals
    */
-  private processTemplate(template: string, context: TemplateContext): string {
+  private processTemplate(template: string, context: TemplateContext, escapeContext: EscapeContext = 'html'): string {
     let result = template;
 
     // Process conditionals first
     result = this.processConditionals(result, context);
 
-    // Process variables
-    result = this.processVariables(result, context);
+    // Process variables with context-appropriate escaping
+    result = this.processVariables(result, context, escapeContext);
 
     return result;
   }
@@ -210,33 +217,83 @@ Please make payment immediately to avoid default.`,
     });
   }
 
+  private escapeForContext(raw: string, ctx: EscapeContext): string {
+    switch (ctx) {
+      case 'html':
+        return escapeHtml(raw);
+      case 'discord':
+        return escapeDiscordMarkdown(raw);
+      case 'sms':
+        return escapeSmsText(raw);
+      case 'json':
+        // For JSON string embedding via manual interpolation, escape quotes and backslashes;
+        // in practice callers should use JSON.stringify instead of interpolation.
+        return raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      case 'none':
+      default:
+        return raw;
+    }
+  }
+
   /**
-   * Process variable substitutions
+   * Process variable substitutions — now context-aware escaped.
    */
-  private processVariables(template: string, context: TemplateContext): string {
+  private processVariables(template: string, context: TemplateContext, escapeContext: EscapeContext = 'html'): string {
     return template.replace(this.variableRegex, (match, varName) => {
       const value = this.getContextValue(varName, context);
-      return value !== undefined ? String(value) : match;
+      if (value === undefined) return match;
+      const raw = String(value);
+      return this.escapeForContext(raw, escapeContext);
     });
   }
 
   /**
-   * Get value from context by variable name
+   * Get value from context by variable name — supports flat aliases for backwards compat
+   * (e.g. {{invoiceId}} → context.invoice.id) because default templates use flat names
+   * but callers pass a nested `invoice: { id, amount, ... }` object.
+   * Tries direct lookup first; if not found, falls back to alias (so flat test contexts like
+   * `{ payer: 'x' }` still work).
    */
   private getContextValue(varName: string, context: TemplateContext): unknown {
-    // Handle nested property access (e.g., invoice.id)
-    const parts = varName.split('.');
-    let value: unknown = context;
+    const aliasMap: Record<string, string> = {
+      invoiceId: 'invoice.id',
+      amount: 'invoice.amount',
+      payer: 'invoice.payer',
+      freelancer: 'invoice.freelancer',
+      funder: 'invoice.funder',
+      dueDate: 'invoice.due_date',
+      discountRate: 'invoice.discount_rate',
+      paidAt: 'invoice.funded_at',
+      daysRemaining: 'invoice.due_date',
+      daysOverdue: 'invoice.due_date',
+      status: 'invoice.status',
+    };
 
-    for (const part of parts) {
-      if (value && typeof value === 'object' && part in value) {
-        value = (value as Record<string, unknown>)[part];
-      } else {
-        return undefined;
+    const tryLookup = (name: string): unknown | undefined => {
+      const parts = name.split('.');
+      let value: unknown = context;
+      for (const part of parts) {
+        if (value && typeof value === 'object' && part in value) {
+          value = (value as Record<string, unknown>)[part];
+        } else {
+          return undefined;
+        }
       }
+      return value;
+    };
+
+    // 1. Direct lookup (supports both flat `{{payer}}` with `{ payer }` and dotted `{{invoice.payer}}`)
+    const direct = tryLookup(varName);
+    if (direct !== undefined) return direct;
+
+    // 2. Alias fallback (e.g. `invoiceId` → `invoice.id`)
+    const aliased = aliasMap[varName];
+    if (aliased) {
+      const aliasVal = tryLookup(aliased);
+      if (aliasVal !== undefined) return aliasVal;
     }
 
-    return value;
+    return undefined;
   }
 
   /**
@@ -323,10 +380,10 @@ Please make payment immediately to avoid default.`,
       );
     }
 
-    // Check for malformed variables
-    const varMatches = template.match(/\{\{(\w+)\}\}/g) || [];
+    // Check for malformed variables — capture any {{...}} and validate allowed chars (word/dot)
+    const varMatches = template.match(/\{\{.*?\}\}/g) || [];
     for (const match of varMatches) {
-      if (!/^\{\{\w+\}\}$/.test(match)) {
+      if (!/^\{\{[\w\.]+\}\}$/.test(match)) {
         errors.push(`Malformed variable: ${match}`);
       }
     }

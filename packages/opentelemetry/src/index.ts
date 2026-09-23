@@ -240,3 +240,6 @@ export class ILNInstrumentation {
     return instrumented as T;
   }
 }
+
+// Re-export tracing helpers for convenience; prefer `import ... from '@iln/opentelemetry/tracing'`
+export * from './tracing';
