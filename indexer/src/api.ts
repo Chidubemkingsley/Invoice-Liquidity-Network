@@ -1,6 +1,7 @@
 import express, { Request, Response, Router, RequestHandler } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import crypto from 'crypto';
+import { traceMiddleware, withSpan } from '@iln/opentelemetry';
 import {
   getDb,
   getFreelancerStats,
@@ -54,6 +55,8 @@ export function createApp(): express.Application {
   // Trust the first hop's X-Forwarded-For (e.g. Railway's proxy) so
   // per-IP rate limiting sees real client IPs rather than the proxy's.
   app.set('trust proxy', 1);
+  // Distributed tracing — W3C traceparent propagation across indexer/oracle/notifications
+  app.use(traceMiddleware('indexer'));
   app.use(createApiRateLimiter());
   app.use(express.json());
 

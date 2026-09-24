@@ -8,6 +8,8 @@ import {
   createDeliveryAuditLog,
 } from './db';
 import { SSRFError, assertWebhookTargetPublic } from './ssrf';
+import { escapeHtml, escapeHeaderValue, escapeSmsText } from './templates/helpers';
+import { withSpan, propagateFetch } from '@iln/opentelemetry';
 import type { NotificationPayload, Subscription, NotificationTrigger, Invoice } from './types';
 import { notificationsMetrics } from './metrics';
 
@@ -243,11 +245,11 @@ export async function sendEmail(
         await resend.emails.send({
           from: CONFIG.resendFromEmail,
           to: subscription.destination,
-          subject: payload.subject,
-          html: `<p>${payload.message}</p>
-      <p><strong>Invoice #${payload.invoice.id}</strong></p>
-      <p>Status: ${payload.invoice.status}</p>
-      <p>Due date: ${new Date(payload.invoice.due_date * 1000).toISOString()}</p>`,
+          subject: safeSubject,
+          html: `<p>${safeMessage}</p>
+      <p><strong>Invoice #${safeId}</strong></p>
+      <p>Status: ${safeStatus}</p>
+      <p>Due date: ${safeDue}</p>`,
         });
       },
       {
@@ -431,10 +433,11 @@ export async function sendWebhook(
   }
 
   try {
+    // Header values escaped against CRLF injection; JSON body is via JSON.stringify (safe for JSON context)
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'X-ILN-Trigger': payload.trigger,
-      'X-ILN-Recipient': payload.recipientAddress,
+      'X-ILN-Trigger': escapeHeaderValue(payload.trigger),
+      'X-ILN-Recipient': escapeHeaderValue(payload.recipientAddress),
     };
 
     if (subscription.webhook_secret) {
@@ -445,14 +448,17 @@ export async function sendWebhook(
     }
 
     if (payload.eventId) {
-      headers['X-ILN-Event-Id'] = payload.eventId;
+      headers['X-ILN-Event-Id'] = escapeHeaderValue(payload.eventId);
     }
 
-    response = await fetch(subscription.destination, {
-      method: 'POST',
-      headers,
-      body,
-    });
+    response = await fetch(
+      subscription.destination,
+      propagateFetch({
+        method: 'POST',
+        headers,
+        body,
+      }),
+    );
 
     await updateWebhookDeliveryLog(id, {
       attempts: attempt,
@@ -587,13 +593,14 @@ export async function sendSms(
     return;
   }
 
-  const message = [
+  // SMS is plain-text — strip control chars / CRLF that could split messages or confuse carriers
+  const message = escapeSmsText([
     payload.subject,
     '',
     `Invoice #${payload.invoice.id}`,
     `Status: ${payload.invoice.status}`,
     `Due date: ${new Date(payload.invoice.due_date * 1000).toISOString()}`,
-  ].join('\n');
+  ].join('\n'));
 
   let lastError: string | null = null;
   try {

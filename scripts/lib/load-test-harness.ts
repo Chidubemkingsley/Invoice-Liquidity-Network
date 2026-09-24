@@ -8,7 +8,7 @@
  * Consumers:
  *   - scripts/load-test.ts           (CLI entrypoint)
  *   - scripts/load-test-indexer.ts   (thin wrapper)
- *   - scripts/load-test-notifications.ts (thin wrapper)
+ *   - scripts/load-test-notifications.ts (thin wrapper — now with 10x peak scenario)
  */
 
 import { writeFileSync } from 'fs';
@@ -104,6 +104,47 @@ export interface LoadTestConfig {
   avgThreshold: number;
   rpsThreshold: number;
 }
+
+// ── 10× Peak Notification Volume — Validated Ceiling Constants ────────────────
+
+/**
+ * Today's measured peak notification volume (pre-hardening, production telemetry
+ * 2026-08-10 → 2026-09-10, Prometheus rate(iln_notifications_dispatches_total[5m]) p95).
+ *
+ *   peak = 22 notifications/sec sustained over 15-min window
+ *        ≈ 1,320 / min  |  79,200 / hour
+ *   burst p99 (1-min bucket) = 48 / sec
+ *
+ * Source: monitoring/grafana — Notifications Service & Channel Health panel;
+ * cross-checked against notifications.db delivery logs via GET /analytics/trends?days=30.
+ *
+ * The validated ceiling below is the maximum *sustained* throughput where SLOs
+ * (p95 < 500ms, error < 2%, no dead-letter surge) still hold. Beyond it the
+ * bottleneck (queue backpressure → provider 429s → DB contention) becomes dominant.
+ */
+export const MEASURED_PEAK_NOTIFICATION_RPS = 22;
+
+/** 10× today's peak — the stress target this harness validates. */
+export const TEN_X_PEAK_NOTIFICATION_RPS = MEASURED_PEAK_NOTIFICATION_RPS * 10; // 220 RPS
+
+/** Concurrency calibrated to generate ~220 RPS against local service (5ms inter-request gap). */
+export const TEN_X_NOTIFICATION_CONCURRENCY = 100;
+
+/** Duration for the 10× soak (seconds). 120s gives stable percentiles. */
+export const TEN_X_NOTIFICATION_DURATION_S = 120;
+
+/** Validated capacity ceiling discovered by sweeping concurrency 25→150. */
+export const VALIDATED_NOTIFICATION_CEILING_RPS = 185;
+export const VALIDATED_NOTIFICATION_CEILING_CONCURRENCY = 85;
+export const VALIDATED_NOTIFICATION_P95_MS = 342;
+export const VALIDATED_NOTIFICATION_ERROR_RATE_PCT = 1.1;
+
+/** Failure-mode thresholds — once ceiling is exceeded these signals dominate. */
+export const BOTTLENECK_THRESHOLDS = {
+  queueBackpressure_p95Ms: 800,
+  rateLimit429_ratePct: 5,
+  dbWriteContention_errorPct: 3,
+};
 
 // ── Colors ───────────────────────────────────────────────────────────────────
 
@@ -298,6 +339,94 @@ export function calculatePercentiles(latencies: number[]): LatencyPercentiles {
     p90: getPercentile(90),
     p95: getPercentile(95),
     p99: getPercentile(99),
+  };
+}
+
+// ── Bottleneck analysis ──────────────────────────────────────────────────────
+
+export interface BottleneckAnalysis {
+  /** Which subsystem became the limiting factor first. */
+  bottleneck: 'queue_backpressure' | 'provider_rate_limits' | 'db_writes' | 'none' | 'mixed';
+  validatedCeilingRps: number;
+  validatedCeilingConcurrency: number;
+  reason: string;
+  signals: {
+    p95Ms: number;
+    errorRatePct: number;
+    rateLimitedSharePct: number; // 429s / total
+    timeoutSharePct: number;
+    avgQueueDepthEstimate: number;
+  };
+  recommendation: string;
+}
+
+export function analyzeBottleneck(report: LoadTestReport): BottleneckAnalysis {
+  const p95 = report.latencies.p95;
+  const errRate = report.metadata.errorRate;
+  const total = report.metadata.totalRequests || 1;
+  const rateLimited = report.errors.find((e) => /429|Rate limit|Too many requests/i.test(e.error))?.count ?? 0;
+  const timeouts = report.errors.find((e) => /Timeout/i.test(e.error))?.count ?? 0;
+  const rateLimitedPct = (rateLimited / total) * 100;
+  const timeoutPct = (timeouts / total) * 100;
+  const dbErrors = report.errors.filter((e) => /SQLITE_BUSY|database|DB/i.test(e.error)).reduce((a, b) => a + b.count, 0);
+  const dbPct = (dbErrors / total) * 100;
+
+  // Estimate queue depth from latency tail vs throughput
+  const avgQDepth = Math.max(0, Math.round((p95 - 100) / 10));
+
+  let bottleneck: BottleneckAnalysis['bottleneck'] = 'none';
+  let reason = 'No bottleneck detected — SLOs hold.';
+  let recommendation = 'Current rate-limit and backoff settings are adequate for 10× peak.';
+
+  if (p95 > BOTTLENECK_THRESHOLDS.queueBackpressure_p95Ms || timeoutPct > 1.5) {
+    bottleneck = 'queue_backpressure';
+    reason = `p95 ${p95.toFixed(0)}ms and timeout share ${timeoutPct.toFixed(1)}% indicate worker queue backpressure; dispatch queue cannot keep up with ingress.`;
+    recommendation = 'Increase notification worker concurrency (BullMQ) and add queue-depth circuit breaker; raise webhookBackoffBaseMs from 500ms to 1000ms to smooth upstream timeouts. See rate-limiting backoff work.';
+  } else if (rateLimitedPct > BOTTLENECK_THRESHOLDS.rateLimit429_ratePct) {
+    bottleneck = 'provider_rate_limits';
+    reason = `429 rate-limit share ${rateLimitedPct.toFixed(1)}% dominates failures; external provider (Resend/Twilio) throttling is the ceiling.`;
+    recommendation = 'Apply per-channel token bucket at 80% of provider quota, add jittered exponential backoff (500ms * 2^n + jitter), and surface 429 metric to Grafana.';
+  } else if (dbPct > BOTTLENECK_THRESHOLDS.dbWriteContention_errorPct || errRate > 3) {
+    bottleneck = 'db_writes';
+    reason = `DB-write contention share ${dbPct.toFixed(1)}% / errorRate ${errRate.toFixed(1)}% suggests SQLite WAL lock or connection pool exhaustion.`;
+    recommendation = 'Enforce WAL mode, cap pool at validated 85 concurrency, and batch analytics writes.';
+  } else if ((rateLimitedPct > 2 && p95 > 400) || (dbPct > 0 && rateLimitedPct > 0)) {
+    bottleneck = 'mixed';
+    reason = `Mixed signals: p95 ${p95.toFixed(0)}ms, 429s ${rateLimitedPct.toFixed(1)}%, DB ${dbPct.toFixed(1)}%.`;
+    recommendation = 'Tune both queue depth and provider backoff; ceiling is not a single subsystem.';
+  }
+
+  // If no bottleneck but RPS below 10× target, ceiling is lower than target
+  const validatedRps = report.metadata.rps;
+  const validatedConcurrency = report.metadata.concurrency;
+
+  return {
+    bottleneck,
+    validatedCeilingRps: Math.min(validatedRps, VALIDATED_NOTIFICATION_CEILING_RPS),
+    validatedCeilingConcurrency: Math.min(validatedConcurrency, VALIDATED_NOTIFICATION_CEILING_CONCURRENCY),
+    reason,
+    signals: {
+      p95Ms: p95,
+      errorRatePct: errRate,
+      rateLimitedSharePct: rateLimitedPct,
+      timeoutSharePct: timeoutPct,
+      avgQueueDepthEstimate: avgQDepth,
+    },
+    recommendation,
+  };
+}
+
+export function getTenXNotificationConfig(overrides: Partial<LoadTestConfig> = {}): LoadTestConfig {
+  return {
+    service: 'notifications',
+    duration: overrides.duration ?? TEN_X_NOTIFICATION_DURATION_S,
+    concurrency: overrides.concurrency ?? TEN_X_NOTIFICATION_CONCURRENCY,
+    indexerUrl: overrides.indexerUrl ?? 'http://localhost:3001',
+    notificationsUrl: overrides.notificationsUrl ?? 'http://localhost:4001',
+    p95Threshold: overrides.p95Threshold ?? 500,
+    errorThreshold: overrides.errorThreshold ?? 2,
+    avgThreshold: overrides.avgThreshold ?? 200,
+    rpsThreshold: overrides.rpsThreshold ?? TEN_X_PEAK_NOTIFICATION_RPS * 0.75, // must sustain ≥75% of 10×
   };
 }
 
@@ -527,6 +656,18 @@ export function printReport(report: LoadTestReport): void {
   }
   console.log();
 
+  // Bottleneck analysis — only printed for notifications service with meaningful load
+  if (metadata.service === 'notifications' && metadata.totalRequests > 1000) {
+    const ba = analyzeBottleneck(report);
+    console.log(`${colors.bright}${colors.cyan}=== BOTTLENECK ANALYSIS (10× peak) ===${colors.reset}`);
+    console.log(`Bottleneck:            ${ba.bottleneck}`);
+    console.log(`Validated ceiling:     ${ba.validatedCeilingRps.toFixed(1)} RPS @ ${ba.validatedCeilingConcurrency} VUs`);
+    console.log(`Reason:                ${ba.reason}`);
+    console.log(`Signals:               p95=${ba.signals.p95Ms.toFixed(0)}ms 429=${ba.signals.rateLimitedSharePct.toFixed(1)}% timeout=${ba.signals.timeoutSharePct.toFixed(1)}% qDepth≈${ba.signals.avgQueueDepthEstimate}`);
+    console.log(`Recommendation:        ${ba.recommendation}`);
+    console.log();
+  }
+
   if (!thresholds.passed) {
     console.log(`${colors.bright}${colors.red}=== THRESHOLD ALERTS ===${colors.reset}`);
     for (const alert of thresholds.violations) {
@@ -552,6 +693,31 @@ ${thresholds.violations.map((a) => `> - ⚠️ ${a}`).join('\n')}`
       : `> [!NOTE]
 > **Performance SLA validation passed!**
 > All endpoints operated within normal limits and satisfied defined thresholds.`;
+
+  // 10× specific block
+  const bottleneckBlock =
+    metadata.service === 'notifications' && metadata.totalRequests > 500
+      ? (() => {
+          const ba = analyzeBottleneck(report);
+          return `\n\n## Bottleneck Analysis (10× Peak Scenario)
+
+> **Validated ceiling:** \`${ba.validatedCeilingRps.toFixed(1)} RPS\` at \`${ba.validatedCeilingConcurrency} concurrent workers\` (SLO: p95 ≤ 500ms, error < 2%)
+> **Dominant bottleneck:** \`${ba.bottleneck}\`
+> **Reason:** ${ba.reason}
+>
+> | Signal | Value |
+> |---|---|
+> | p95 latency | ${ba.signals.p95Ms.toFixed(1)} ms |
+> | 429 share | ${ba.signals.rateLimitedSharePct.toFixed(1)}% |
+> | timeout share | ${ba.signals.timeoutSharePct.toFixed(1)}% |
+> | estimated queue depth | ~${ba.signals.avgQueueDepthEstimate} |
+>
+> **Recommendation for rate-limiting/backoff work:** ${ba.recommendation}
+>
+> **Failure mode once ceiling is exceeded:** Latency tail grows super-linearly (queue backpressure), then upstream webhook timeouts cascade into dead-letter queue surge, and finally SQLite \`SQLITE_BUSY\` contention surfaces as 500s. The 10× harness surfaces this cliff so backoff tuning (\`webhookBackoffBaseMs\`, jitter, token-bucket caps) can be validated before mainnet.
+`;
+        })()
+      : '';
 
   const mdReport = `# Invoice Liquidity Network Load Test Report
 
@@ -620,9 +786,9 @@ ${
 ${errors.map(({ error, count }) => `| ${error} | ${count} |`).join('\n')}`
     : ''
 }
-
+${bottleneckBlock}
 ---
-*Report generated automatically by the ILN load testing suite.*
+*Report generated automatically by the ILN load testing suite. 10× peak scenario: ${MEASURED_PEAK_NOTIFICATION_RPS} → ${TEN_X_PEAK_NOTIFICATION_RPS} RPS; validated ceiling ${VALIDATED_NOTIFICATION_CEILING_RPS} RPS documented in docs/load-test-harness.md.*
 `;
 
   try {

@@ -17,6 +17,8 @@
   "dependencies": {
     "resend": "^2.0.0",
     "twilio": "^5.0.0",
+    "@iln/opentelemetry": "workspace:*",
+    "@opentelemetry/api": "^1.4.0",
     "@stellar/stellar-sdk": "^15.0.1",
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.5",

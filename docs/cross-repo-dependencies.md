@@ -137,3 +137,15 @@ A: The existing `sdk-types-sync` CI job catches this. It rebuilds the contract, 
 
 **Q: Can I have multiple valid rows for the same contract version?**
 A: Yes. For example, contract `0.1.0` may be compatible with SDK `0.1.0` and SDK `0.1.1` if the spec didn't change.
+
+---
+
+## Service Level Objectives (SLOs) Cross-Repo Reference
+
+The main repository hosts authoritative SLO definitions for the ecosystem in [`docs/slos.md`](slos.md). Downstream repositories (`ILN-Frontend` and `ILN-Smart-Contract`) MUST reference these authoritative numbers for downtime resilience, lag tolerances, and timeout settings:
+
+- **Indexer Ingestion Lag Target**: `< 5.0s` for 99.9% of ledgers. Frontend cache resilience fallback window is set to **15.0s** based on this target.
+- **Oracle Verification Latency Target**: `p95 < 150ms`, `p99 < 400ms`. Frontend badge verification spinner timeout is capped at **2.0s**.
+- **Notification Delivery Latency Target**: `p95 < 10.0s` across email, SMS, and webhooks. Frontend polling interval aligns with this 10.0s target.
+- **Uptime Targets**: Indexer `99.9%`, Oracle Service `99.95%`, Notification Service `99.9%`.
+

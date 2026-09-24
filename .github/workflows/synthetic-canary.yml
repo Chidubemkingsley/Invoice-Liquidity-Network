@@ -23,11 +23,12 @@ concurrency:
 # Least-privilege: the job only makes HTTP probes; no repo writes needed.
 permissions:
   contents: read
+  issues: write
 
 jobs:
-  # ── Unit / offline tests ────────────────────────────────────────────────────
+  # ── Unit / offline tests — full critical-path coverage ──────────────────────
   canary-unit-tests:
-    name: Canary unit tests (offline mocks)
+    name: Canary unit tests (offline mocks — critical-path)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -45,7 +46,7 @@ jobs:
           fi
           pnpm install --frozen-lockfile --ignore-scripts || true
 
-      - name: Run synthetic canary tests
+      - name: Run synthetic canary tests (critical-path)
         run: pnpm vitest run tests/synthetic/canary.test.ts --reporter=verbose
         env:
           CANARY_INVOICE_ID: ${{ inputs.canary_invoice_id || '1' }}
@@ -59,9 +60,9 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # ── Live probe against deployed services ────────────────────────────────────
+  # ── Live probe against deployed services — correctness assertions ───────────
   canary-live-probe:
-    name: Live canary probe (deployed services)
+    name: Live canary probe (deployed services — full critical-path)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # Only run live checks when secrets are configured
@@ -82,9 +83,18 @@ jobs:
       - name: Install ws (for WebSocket canary)
         run: npm install ws
 
-      - name: Run synthetic canary script
+      - name: Run synthetic canary script (critical-path)
         id: canary
-        run: tsx scripts/synthetic-canary.ts
+        run: |
+          tsx scripts/synthetic-canary.ts 2>&1 | tee canary-output.log
+          exit_code=${PIPESTATUS[0]}
+          # Store report summary for next steps
+          if grep -q "❌" canary-output.log; then
+            echo "canary_failed=true" >> $GITHUB_OUTPUT
+          else
+            echo "canary_failed=false" >> $GITHUB_OUTPUT
+          fi
+          exit $exit_code
         continue-on-error: true
         env:
           INDEXER_BASE_URL: ${{ secrets.INDEXER_BASE_URL || vars.INDEXER_BASE_URL || 'http://localhost:3001' }}
@@ -97,11 +107,38 @@ jobs:
           CANARY_WEBHOOK_SUB_ID: ${{ vars.CANARY_WEBHOOK_SUB_ID || '0' }}
           CANARY_REQUEST_TIMEOUT_MS: '8000'
 
-      - name: Report canary failure as GitHub Alert
+      - name: Upload canary log as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-live-log-${{ github.run_id }}
+          path: canary-output.log
+          retention-days: 14
+
+      - name: Annotate failures with direct runbook links
+        if: steps.canary.outputs.canary_failed == 'true'
+        run: |
+          echo "::group::🔗 Runbook links for failed checks — open directly from logs"
+          echo "• Indexer health/lag → https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/incident-response.md#signal-2-indexer-lag--ingestion-health"
+          echo "• Indexer data-loss → https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/incident-response.md#scenario-b-indexer-data-loss-or-state-corruption"
+          echo "• Oracle malfunction → https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/incident-response.md#scenario-c-oracle-service-compromise-or-malfunction"
+          echo "• Notifications failures → https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/incident-response.md#signal-3-notification-service-failures"
+          echo "• Webhook delivery → https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/incident-response.md#signal-4-webhook-delivery-errors"
+          echo "• Full monitoring reference → https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/monitoring.md#6-synthetic-canary-integration"
+          echo "::endgroup::"
+          cat canary-output.log
+
+      - name: Report canary failure as GitHub Alert (pages on-call)
         if: steps.canary.outcome == 'failure'
         run: |
-          echo "::error title=Synthetic Canary Failed::One or more ILN service canary checks failed. Check the logs and any configured ALERT_WEBHOOK_URL for details."
+          echo "::error title=Synthetic Canary Failed — P1::One or more ILN critical-path canary checks failed. This pages on-call. Open the runbook links above or see https://github.com/Invoice-Liquidity-Network/Invoice-Liquidity-Network/blob/main/docs/incident-response.md for triage. Logs attached as artifact canary-live-log-${{ github.run_id }}."
+          # Also create a GitHub issue for tracking (best-effort)
+          gh issue create --title "🚨 Synthetic canary failed @ $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --body "Canary live probe failed. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} — triage via incident-response runbook links in logs. Alert webhook (if configured) was also notified with runbookUrl." \
+            --label "incident,canary" || echo "gh issue create failed (no permissions or gh not available)"
           exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ── Testnet health gate (reuse existing reusable workflow) ──────────────────
   testnet-health:
