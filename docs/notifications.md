@@ -230,7 +230,60 @@ this doc listed those and they are not read by the service.
 
 ---
 
-*For more details, see the SDK and service source code.*
+## Template Escaping Contract & Injection Audit (Hardening Batch)
+
+> **Rule for future template authors:** every interpolation must use the escaper for its output context. Merging a new template without a row in the inventory below and without a corresponding adversarial test is a CI failure.
+
+### Why this exists
+Notification templates interpolate fields that are **untrusted by default**: Stellar addresses, invoice memo/metadata, and chain-emitted event fields (`amount`, `freelancer`, etc.) can be controlled by an attacker via contract events or memos. Without context-appropriate escaping the same payload would exploit multiple output surfaces (HTML email, webhook JSON, HTTP headers, Discord markdown, SMS text, WebSocket JSON).
+
+### Outbound template inventory (trace: field → data source → output context → escaper)
+
+| # | Template / surface | Interpolated field(s) | Data source | Output context | Escaper (file:line) |
+|---|-------------------|------------------------|-------------|----------------|----------------------|
+| 1 | `funded.template.ts` | `invoiceId, amount, dueDate, freelancer/payer/funder, greeting, dashboardUrl` | chain (invoice) + user (url) + internal (greeting) | HTML email + href attr | `helpers.ts:escapeHtml` + `escapeAttribute` |
+| 2 | `payment.template.ts` | `invoiceId, amount, dueDate, freelancer/payer/funder, roleLabel` | chain + internal | HTML email | `escapeHtml` |
+| 3 | `dispute.template.ts` | `invoiceId, amount, dueDate, freelancer/payer/funder` | chain + internal | HTML email | `escapeHtml` |
+| 4 | `due-warning.template.ts` | `invoiceId, amount, dueDate, freelancer/payer` | chain | HTML email | `escapeHtml` |
+| 5 | `digest.template.ts` | `recipient, frequency, periodLabel, items[].amount/freelancer/payer/invoiceId/dueDate, unsubscribeToken` | user + chain + internal | HTML email + URL | `escapeHtml` + `encodeURIComponent` |
+| 6 | `delivery.ts:sendEmail` | `payload.message, invoice.id/status/due_date, subject` | chain + internal | HTML email body + header | `escapeHtml` + `escapeHeaderValue` |
+| 7 | `delivery.ts:sendWebhook` | `trigger, actor, invoice.*, subject, message, eventId` | chain + user + internal | JSON body (`JSON.stringify`) | `JSON.stringify` (no concat) |
+| 8 | `delivery.ts:sendWebhook` headers | `X-ILN-Trigger, X-ILN-Recipient, X-ILN-Event-Id` | chain + user | HTTP header | `escapeHeaderValue` |
+| 9 | `delivery.ts:sendSms` | `subject, invoice.id/status/due_date` | chain + internal | SMS plain-text | `escapeSmsText` |
+|10 | `template-engine.ts` `{{var}}` | any `TemplateContext` field | chain + user + internal (generic) | `html`/`discord`/`sms`/`json`/`none` | `escapeForContext()` |
+|11 | `preferences-api.ts` unsubscribe page | `stellar_address` | user | HTML | `escapeHtml` |
+|12 | `websocket.ts` broadcast | `InvoiceEvent` | chain | JSON (WebSocket) | `JSON.stringify` |
+
+Adding a new template requires: (a) a new row above, (b) the correct escaper call at the interpolation site, and (c) an adversarial regression test in `notifications/tests/template-injection.test.ts` — see the `// ADVERSARIAL` payload set there.
+
+### Escapers (helpers.ts)
+
+| Escaper | When to use | What it neutralizes |
+|---------|-------------|---------------------|
+| `escapeHtml(str)` | HTML email body, any `{{var}}` rendered as HTML | `& < > " ' '` → `&amp; &lt; &gt; &quot; &#39;` |
+| `escapeAttribute(str)` | HTML attribute values (href, title) | same as `escapeHtml` + backtick |
+| `escapeHeaderValue(str)` | Any HTTP header value (`X-ILN-*`, `Subject`) | strips `\r \n \x00-\x1F`, caps 512 chars |
+| `escapeSmsText(str)` | SMS body, plain-text fallback | strips C0 control chars, normalizes CRLF → space, 1600 cap |
+| `escapeDiscordMarkdown(str)` | Discord markdown (future `discord` adapter) | breaks `** * __ _ ` || ` @# []` |
+| `JSON.stringify` | Webhook/WebSocket JSON payloads | never interpolate via string concat; `isJsonSafeRoundTrip` proves safety |
+
+### What was audited & fixed
+
+- Enumerated all 12 surfaces above and traced every field back to its origin (chain vs user vs internal). No field was left untraced.
+- Verified `funded/payment/dispute/due-warning/digest` templates already used `escapeHtml` for HTML — no change needed, but added `escapeAttribute` path for `dashboardUrl`/`unsubscribeUrl` hrefs (defense-in-depth, tested).
+- `delivery.ts:sendEmail` previously interpolated `payload.message`/`invoice.status` raw into HTML — **fixed** to `escapeHtml` + header-safe `subject`; `delivery.ts:sendWebhook` headers previously raw — **fixed** to `escapeHeaderValue`; `sendSms` now `escapeSmsText`.
+- `template-engine.ts` previously did `String(value)` with no escaping — **hardened** to `escapeForContext(value, ctx)` defaulting to `'html'`; new `EscapeContext` param lets Discord/SMS/JSON callers select the correct escaper explicitly. No existing `engine.render()` call relied on raw HTML, so defaulting to `'html'` is backwards-compatible and safe.
+- `websocket.ts` and `preferences-api.ts` already used `JSON.stringify` / local `escapeHtml`; confirmed no gap.
+- Added `notifications/tests/template-injection.test.ts`: 35+ regression cases with `<script>`, `<img onerror>`, JSON-breaking `","evil":`, Discord `@everyone`/`||spoiler||`, CRLF header injection, SMS control chars, and per-template adversarial inventory test that will fail if a future template adds a field without an entry.
+
+### Regression test command
+
+```bash
+pnpm --filter ./notifications vitest run tests/template-injection.test.ts --reporter=verbose
+pnpm --filter ./notifications vitest run tests/templates.test.ts --reporter=verbose
+```
+
+*For more details, see the SDK and service source code and `notifications/src/templates/helpers.ts` header doc.*
 
 ## Architectural Note: Notifications WebSocket vs Indexer Subscription
 

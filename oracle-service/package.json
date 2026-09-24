@@ -18,6 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@iln/opentelemetry": "workspace:*",
+    "@opentelemetry/api": "^1.4.0",
     "@stellar/stellar-sdk": "^15.0.1",
     "express": "^4.21.2",
     "prom-client": "^15.1.3",

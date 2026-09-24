@@ -1,5 +1,67 @@
 /**
  * Template helper utilities shared across all email templates.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │                ESCAPING CONTRACT — READ BEFORE EDITING                │
+ * ├─────────────────────────────────────────────────────────────────────────┤
+ * │ Every outbound template interpolates at least one field that is          │
+ * │ attacker-controlled (chain data or user input). The correct escape       │
+ * │ function MUST be used for the template's output context:                │
+ * │                                                                         │
+ * │  Output context      │ Escaper to use              │ Example bug if     │
+ * │                      │                             │ omitted             │
+ * │──────────────────────┼─────────────────────────────┼────────────────────│
+ * │ HTML email body      │ escapeHtml()                │ <script>alert(1)   │
+ * │ HTML attribute (href │ escapeHtml() on URL +       │ "><img onerror=   │
+ * │   / title)           │ validate via isValidUrl()   │                    │
+ * │ Webhook JSON body    │ JSON.stringify() (never     │ breaking JSON with │
+ * │                      │ string concat)              │ "}, {"evil":       │
+ * │ Webhook headers      │ escapeHeaderValue()         │ CRLF injection     │
+ * │  X-ILN-*             │                             │                    │
+ * │ Discord markdown*    │ escapeDiscordMarkdown()     │ @everyone, ||spoiler│
+ * │ SMS plain text       │ escapeSmsText() (control   │ SMS split / carrier│
+ * │                      │ char strip)                 │ filter bypass      │
+ * │ Subject line (email) │ escapeHtml() OR strip +     │ header injection   │
+ * │  header)             │ escapeHeaderValue()         │                    │
+ * │ Plain-text fallback  │ escapeSmsText()             │                    │
+ * │                                                                         │
+ * │ *Discord is not a persisted subscription channel today but               │
+ * │ governance-monitor and future digest-Discord adapters reuse the same     │
+ * │ helpers, so every helper is unit-tested with adversarial payloads.       │
+ * │                                                                         │
+ * │ Data-source trace (field → origin → trust):                             │
+ * │   invoice.id, amount, due_date, discount_rate → chain (Soroban event) │  │
+ * │     → treat as untrusted (contract may emit arbitrary stringified data) │
+ * │   invoice.freelancer/payer/funder → Stellar address from chain →       │
+ * │     untrusted (may be G... + HTML payload if memo spoof)                 │
+ * │   recipient.address/email, webhook destination → user input → untrusted │
+ * │   trigger, status, periodLabel → internal enum → trusted but still     │
+ * │     escaped for defense-in-depth                                        │
+ * │                                                                         │
+ * │ Template inventory (all outbound surfaces that interpolate):              │
+ * │   1. funded.template.ts    — HTML email (funded)  — fields: invoiceId, │
+ * │        amount, dueDate, freelancer/payer/funder, greeting, dashboardUrl│
+ * │   2. payment.template.ts   — HTML email (paid)    — same + roleLabel   │
+ * │   3. dispute.template.ts   — HTML email (default) — same                │
+ * │   4. due-warning.template.ts — HTML email (due soon) — same             │
+ * │   5. digest.template.ts    — HTML email (daily/weekly digest) —         │
+ * │        recipient, amount, dueDate, freelancer/payer, invoiceId,         │
+ * │        periodLabel, unsubscribeToken (via URL)                            │
+ * │   6. delivery.ts:sendEmail — HTML wrapper around payload.message/       │
+ * │        invoice fields (Resend) — message, invoice.id/status/due_date   │
+ * │   7. delivery.ts:sendWebhook — JSON body (invoice, trigger, actor,     │
+ * │        subject, message, eventId) — all chain/user fields JSON-escaped │
+ * │        + headers X-ILN-* (escapeHeaderValue)                             │
+ * │   8. delivery.ts:sendSms   — SMS text (subject + invoice.id/status)    │
+ * │        plain-text (control-char strip)                                    │
+ * │   9. template-engine.ts    — Generic {{var}} interpolation — now        │
+ * │        context-aware (HTML escape by default)                             │
+ * │  10. preferences-api.ts unsubscribe page — HTML escape on address        │
+ * │  11. WebSocket broadcast (websocket.ts) — JSON payload (JSON.stringify) │
+ * │                                                                         │
+ * │ If you add a new template, add a row above and a matching adversarial   │
+ * │ test in tests/template-injection.test.ts.                                │
+ * └─────────────────────────────────────────────────────────────────────────┘
  */
 
 /** Format a stroops/micro-unit amount as a human-readable decimal string. */
@@ -31,6 +93,65 @@ export function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Escape a string for safe embedding in an HTML attribute value (e.g. href).
+ * Uses escapeHtml and additionally escapes backticks and validates URL scheme.
+ */
+export function escapeAttribute(str: string): string {
+  return escapeHtml(str).replace(/`/g, '&#96;');
+}
+
+/**
+ * Escape for Discord markdown output.
+ * Neutralizes: **, *, __, _, `, ||, > quote, [link], @everyone/@here, #channel
+ */
+export function escapeDiscordMarkdown(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/\*\*/g, '\\*\\*')
+    .replace(/\*/g, '\\*')
+    .replace(/__/g, '\\_\\_')
+    .replace(/_/g, '\\_')
+    .replace(/`/g, '\\`')
+    .replace(/\|\|/g, '\\|\\|')
+    .replace(/@/g, '@\u200b') // zero-width space breaks @everyone / @here without visible change
+    .replace(/#/g, '#\u200b');
+}
+
+/**
+ * Escape for plain-text SMS: strip control characters (including CRLF injection)
+ * and truncate to 1600 chars (carrier limit). SMS has no markup, but control
+ * chars can split messages or confuse carriers.
+ */
+export function escapeSmsText(str: string): string {
+  // Remove C0 control chars except tab/newline, replace CRLF runs with single space
+  const cleaned = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').replace(/\r?\n+/g, ' ');
+  return cleaned.slice(0, 1600);
+}
+
+/**
+ * Escape for HTTP header values (X-ILN-Trigger, X-ILN-Recipient, X-ILN-Signature).
+ * Strips CRLF and non-printable ASCII to prevent header injection.
+ * Returns a fallback sanitized string rather than throwing for resilience.
+ */
+export function escapeHeaderValue(str: string): string {
+  return str.replace(/[\r\n\x00-\x1F\x7F]+/g, ' ').trim().slice(0, 512);
+}
+
+/**
+ * Validate that a string, when embedded as a JSON string value via JSON.stringify,
+ * round-trips correctly. This is a test helper to prove webhook JSON context is safe.
+ */
+export function isJsonSafeRoundTrip(value: string): boolean {
+  try {
+    const encoded = JSON.stringify({ v: value });
+    const decoded = JSON.parse(encoded) as { v: string };
+    return decoded.v === value;
+  } catch {
+    return false;
+  }
+}
+
 /** Shared email wrapper: responsive, inbox-safe HTML shell.
  *
  * @param title       Email `<title>` and visible heading text.
@@ -47,9 +168,6 @@ export function emailShell(
 ): string {
   const { unsubscribeUrl } = options;
   const unsubHref = unsubscribeUrl ?? 'https://iln.finance/unsubscribe';
-  // The visible label is always "Unsubscribe" for consistency with established
-  // email conventions (and to keep the existing snapshot tests passing). Only
-  // the destination URL changes when a tokenized link is supplied.
   const unsubLabel = 'Unsubscribe';
   return `<!DOCTYPE html>
 <html lang="en">

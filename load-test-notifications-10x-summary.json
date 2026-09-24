@@ -1,0 +1,21 @@
+{
+  "measuredPeakRps": 22,
+  "tenXTargetRps": 220,
+  "validatedCeilingRps": 185,
+  "validatedCeilingVus": 85,
+  "simulatedBurst": {
+    "totalEvents": 26000,
+    "success": 22712,
+    "rateLimited": 1981,
+    "timeouts": 1307,
+    "dbBusy": 0,
+    "p95Ms": 639,
+    "avgMs": 354.7,
+    "errorRatePct": 12.6
+  },
+  "bottleneck": "queue_backpressure",
+  "bottleneckReason": "p95 639ms / timeout 5.0% — dispatch queue saturated, upstream webhook timeouts trigger exponential backoff and dead-letter surge",
+  "failureModeBeyondCeiling": "p95 grows super-linearly (queue backpressure) → webhook timeouts → exponential backoff → dead-letter queue surge → SQLITE_BUSY → 500s; shedding via 429 + Retry-After preserves SLO",
+  "backoffRecommendation": "webhookBackoffBaseMs 500→1000ms + jitter; per-channel token bucket at 80% of Resend/Twilio quota; queue-depth circuit breaker at 85 concurrent workers",
+  "timestamp": "2026-09-23T19:42:45.129Z"
+}
