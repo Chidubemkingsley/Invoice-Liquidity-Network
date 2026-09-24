@@ -313,3 +313,105 @@ Monitors automated release pipelines, SLSA provenance generation, package publis
 | **Notification Failures**| Email / SMS / Internal poller | `/health`, `/analytics` | > 5% error rate | Check provider API keys & queues |
 | **Webhook Errors** | Subscriber HTTP endpoints | `/subscriptions/:id/logs`, `/analytics` | > 10% delivery failure | Check retry queue & dead-letter |
 | **CI Release Failures** | Release workflows & provenance | GitHub Actions (`release.yml`, etc.) | Any workflow exit code != 0 | Check secrets / OIDC / build logs |
+
+---
+
+## 6. Service Level Objectives (SLOs) & Error Budgets
+
+SLOs are now codified as Prometheus recording rules in `monitoring/prometheus/slo-alerts.yml` and drive the MWMBR alerts below. All SLOs use a 28-day rolling window.
+
+| SLO | SLI | Target | Error Budget | Instrumentation |
+|---|---|---|---|---|
+| **Indexer Read API — Availability** | `sum(rate(iln_http_errors_total[5m])) / sum(rate(iln_http_requests_total[5m]))` should be <0.001 | 99.9% successful requests | 0.1% (~43m/month) | `indexer/src/metrics.ts`: `iln_http_requests_total`, `iln_http_errors_total` — observed per-request via `observeHttpRequest` middleware |
+| **Indexer Read API — Latency** | `histogram_quantile(0.95, rate(iln_http_request_duration_seconds_bucket[5m]))` < 0.2s | 99% of reads p95 <200ms | 1% budget | `iln_http_request_duration_seconds` histogram |
+| **Oracle Freshness — Non-stale** | `rate(oracle_stale_responses_total[5m]) / rate(oracle_verification_requests_total[5m])` <0.005 | 99.5% fresh | 0.5% (~3.6h/month) | `oracle-service/src/metrics.ts`: `oracle_stale_responses_total`, `oracle_verification_requests_total` |
+| **Oracle Latency** | `histogram_quantile(0.95, rate(oracle_verification_duration_seconds_bucket[5m]))` <1s | 99% p95 <1s | 1% | Same histogram + `oracle_latency_slo_violations_total` |
+| **Notification Delivery — Success** | `rate(iln_notifications_failures_total[5m]) / rate(iln_notifications_dispatches_total[5m])` <0.001 | 99.9% delivered | 0.1% | `notifications/src/metrics.ts`: `iln_notifications_dispatches_total`, `iln_notifications_failures_total`, plus `iln_notifications_audit_records_total` for audit completeness |
+| **Notification Latency** | `histogram_quantile(0.95, rate(iln_notifications_delivery_duration_seconds_bucket[5m]))` <5s | p95 <5s | 1% | `iln_notifications_delivery_duration_seconds` |
+
+Cost-attribution is wired in alongside latency SLOs:
+
+- Indexer: `iln_cost_usd_total{service="indexer", operation="http_request"}` (~$0.00002 per read)
+- Oracle: `oracle_cost_usd_total{operation="verification"}` (~$0.001 per verification, covers RPC + attestation)
+- Notifications: `iln_notifications_cost_usd_total{channel="email|sms|webhook"}` (email $0.0006, webhook $0.0001, sms $0.02)
+
+These feed the "Cost Attribution per Service (USD/h)" panel in the unified dashboard.
+
+---
+
+## 7. Multi-Window, Multi-Burn-Rate (MWMBR) Alerting
+
+Static thresholds have been **retired** in favour of the SRE-standard MWMBR pattern (Google SRE Workbook Ch. 5). Each SLO has two burn-rate windows:
+
+- **Fast burn** — 5m + 1h windows at high burn rate (14x for 99.9%, 6x for 99.5%). Fires after `for: 5m`, routes `severity: critical` to PagerDuty / `#alerts-ops-critical`. Burns 2% of monthly budget per hour if sustained.
+- **Slow burn** — 30m + 6h windows at moderate burn rate (6x for 99.9%, 3x for 99.5%). Fires after `for: 30m`, routes `severity: warning` to `#alerts-ops-warning`. Detects slower regressions that would still exhaust the budget in days.
+
+Rule file: `monitoring/prometheus/slo-alerts.yml`. Loaded via `prometheus.yml: rule_files`.
+
+**Migration from static thresholds:**
+
+| Old static alert | Replacement MWMBR alert |
+|---|---|
+| `syncLag >60s warning, >300s critical` | `IndexerAvailabilityFastBurn` / `IndexerAvailabilitySlowBurn` (error-ratio 14x/6x) + `IndexerLatencyFast/SlowBurn` — lag is now correlated with error ratio and latency burn, visible in the *Indexer Lag vs Oracle Stale* correlation panel |
+| `notification failure rate >5% over 15m` | `NotificationDeliveryFastBurn` (14x over 5m+1h) and `NotificationDeliverySlowBurn` (6x over 30m+6h) on `iln_notifications_dispatches/failures` — accounts for low-volume services where 5% is noisy |
+| `webhook failures >10% over 10m` | Same `NotificationDelivery*Burn` alerts partitioned by `channel="webhook"` + audit log `/audit/deliveries` for per-recipient verification |
+| `fraud flag rate >25% over 10m` | Kept in `oracle-service-alerts.yml` (fraud-specific, not generic SLO) — SLO alerts complement it for freshness/latency |
+
+To test MWMBR locally:
+
+```bash
+promtool check rules monitoring/prometheus/slo-alerts.yml
+promtool test rules test/monitoring/slo-mwmbr.test  # if present
+```
+
+Triage for any `*FastBurn` critical burn alert:
+
+1. Open the **unified dashboard** at `monitoring/grafana/dashboard.json` → *SLO Burn Rate — Multi-Service Composite* panel to see which SLO is burning.
+2. For indexer burns, check *Indexer Read Latency p95 vs SLO (200ms)* and *Indexer Lag vs Oracle Stale* correlation panels.
+3. For oracle burns, check *Oracle Freshness SLO* and *Indexer Lag* — indexer lag is the usual upstream cause.
+4. For notification burns, check *Notification Delivery SLO* and *Notification Fallback & Audit Health* panels, plus `GET /audit/deliveries?status=failed&start=...` and `GET /health/providers`.
+
+---
+
+## 8. Unified Cross-Service Grafana Dashboard
+
+**Location (code-defined, reviewed like any other change):**
+
+- Canonical definition: `monitoring/grafana/dashboard.json` (mirrored at `examples/grafana/dashboard.json`)
+- TypeScript builder: `monitoring/grafana/dashboard.ts` — `tsx monitoring/grafana/dashboard.ts --write` regenerates the JSON. CI validates they stay in sync.
+- Prometheus data source: `monitoring/prometheus/prometheus.yml` (scrape interval 15s for all three services)
+
+**Intended use:**
+
+This dashboard is the **single operator-facing view** for cross-service incident triage. It replaces per-service siloed dashboards. Use it when an alert fires or during the 15-minute synthetic canary check.
+
+**Panel groups:**
+
+1. **Protocol Business Metrics** — submissions, funding, settlement, dispute rates (existing)
+2. **Indexer Service Operations** — ledger cursor, lag, throughput, DB latency (existing)
+3. **Oracle Service Performance & Accuracy** — verification rate, cache ratio, stale rate, latency (existing)
+4. **Notifications Service & Channel Health** — dispatches by channel, failure rate, rate-limit 429s, delivery latency p95 (existing)
+5. **🆕 Cross-Service Correlation (Incident Triage)** — the key addition:
+   - *Oracle Latency vs Notification Volume* — dual-axis graph correlating `oracle p95 latency` with `notification dispatch rate` to spot incident-wide slowdowns
+   - *Indexer Lag vs Oracle Stale Responses* — lag is upstream of stale; a lag spike predicts stale alerts minutes before they fire
+   - *SLO Burn Rate — Multi-Service Composite* — overlays fast-burn ratios for all three SLOs on one chart for at-a-glance burn comparison
+   - *Notification Fallback & Audit Health* — fallback deliveries by priority + audit records by status + provider health checks
+6. **🆕 Cost Attribution & Latency SLO Instrumentation** — wired from the instrumentation work in this batch:
+   - *Cost per Service (USD/h)* — `iln_cost_usd_total`, `oracle_cost_usd_total`, `iln_notifications_cost_usd_total`
+   - *Indexer Read Latency p95 vs SLO (200ms)* — with static threshold line for MWMBR burn context
+   - *Oracle Freshness SLO* and *Notification Delivery SLO* — stale/failure ratios with SLO-threshold overlays
+
+**Importing:**
+
+See Section 5 above (*Importing the Dashboard into Grafana*) — upload `monitoring/grafana/dashboard.json`. The dashboard is versioned as code: review `monitoring/grafana/dashboard.ts` for the typed definition and run `tsx monitoring/grafana/dashboard.ts --write` if you change it.
+
+---
+
+## 9. Retired Static-Threshold Alerts — Migration Notes
+
+The following static-threshold alerts have been **deleted** and replaced by MWMBR equivalents above:
+
+- `OracleNoVerifications`, `OracleAllVerificationsRejected`, `OracleStaleResponsesRising`, `OracleVerificationLatencyHigh`, `OracleCacheHitRateLow` — remain in `oracle-service-alerts.yml` only if they reflect fraud/anomaly detection (e.g. `OracleFraudFlagRateHigh`). Generic latency/staleness checks now live in `slo-alerts.yml` as `OracleFreshness*Burn` and `OracleLatency*Burn`.
+- Any `rate(...) > fixed threshold` without a burn-rate window — replaced by the 5m+1h / 30m+6h pattern.
+
+If you need to roll back to static thresholds temporarily (e.g. Prometheus without recording-rule support), restore the prior `oracle-service-alerts.yml` revision, but be aware this reintroduces alert fatigue on brief blips and slow detection of sustained burns (the reason MWMBR is the production-grade standard).

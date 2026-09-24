@@ -2,9 +2,34 @@ import { createHmac } from 'crypto';
 import { Resend } from 'resend';
 import Twilio from 'twilio';
 import { CONFIG } from './config';
-import { createWebhookDeliveryLog, updateWebhookDeliveryLog } from './db';
+import {
+  createWebhookDeliveryLog,
+  updateWebhookDeliveryLog,
+  createDeliveryAuditLog,
+} from './db';
 import { SSRFError, assertWebhookTargetPublic } from './ssrf';
 import type { NotificationPayload, Subscription, NotificationTrigger, Invoice } from './types';
+import { notificationsMetrics } from './metrics';
+
+function safeCreateAudit(entry: Parameters<typeof createDeliveryAuditLog>[0]): void {
+  try {
+    if (typeof createDeliveryAuditLog === 'function') {
+      createDeliveryAuditLog(entry);
+      try {
+        notificationsMetrics.auditRecordsTotal.inc({ status: entry.status, channel: entry.channel });
+      } catch {}
+    }
+  } catch {
+    // Audit write is best-effort in mocked/test environments; never break delivery
+  }
+}
+
+const COST_PER_DISPATCH_USD: Record<string, number> = {
+  email: 0.0006,
+  webhook: 0.0001,
+  sms: 0.02,
+  websocket: 0.00005,
+};
 
 const resend = new Resend(CONFIG.resendApiKey);
 
@@ -175,14 +200,46 @@ export async function sendEmail(
   payload: NotificationPayload
 ): Promise<void> {
   const destination = subscription.destination;
+  const attemptTimestamps: number[] = [];
+  const start = Date.now();
   if (!shouldAllowRequest(destination)) {
     console.warn(`[delivery] Circuit open for ${destination} — skipping email`);
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'email',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: 1,
+      last_error: 'Circuit breaker open',
+      attempt_timestamps: [Date.now()],
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'email', reason: 'circuit_open' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'email' }, (Date.now() - start) / 1000);
+    } catch {}
+    deadLetterQueue.push({
+      channel: 'email',
+      destination,
+      subscriptionId: subscription.id,
+      trigger: payload.trigger,
+      invoice: payload.invoice,
+      subject: payload.subject,
+      message: payload.message,
+      lastError: 'Circuit breaker open',
+      attempts: 1,
+      timestamp: Date.now(),
+    });
     return;
   }
 
+  let lastError: string | null = null;
   try {
     await retryWithBackoff(
       async () => {
+        attemptTimestamps.push(Date.now());
         await resend.emails.send({
           from: CONFIG.resendFromEmail,
           to: subscription.destination,
@@ -195,7 +252,11 @@ export async function sendEmail(
       },
       {
         label: `email to ${subscription.destination}`,
-        onDeadLetter: (lastError) => {
+        onRetry: (_attempt, error) => {
+          lastError = error;
+        },
+        onDeadLetter: (deadLetterError) => {
+          lastError = deadLetterError;
           deadLetterQueue.push({
             channel: 'email',
             destination: subscription.destination,
@@ -204,7 +265,7 @@ export async function sendEmail(
             invoice: payload.invoice,
             subject: payload.subject,
             message: payload.message,
-            lastError,
+            lastError: deadLetterError,
             attempts: CONFIG.maxWebhookRetry,
             timestamp: Date.now(),
           });
@@ -212,8 +273,45 @@ export async function sendEmail(
       }
     );
     recordCircuitSuccess(destination);
-  } catch {
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'email',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'delivered',
+      attempts: attemptTimestamps.length || 1,
+      last_error: null,
+      attempt_timestamps: attemptTimestamps.length ? attemptTimestamps : [Date.now()],
+    });
+    try {
+      notificationsMetrics.dispatchesTotal.inc({ channel: 'email', trigger: payload.trigger });
+      notificationsMetrics.costUsdTotal.inc({ channel: 'email', operation: 'dispatch' }, COST_PER_DISPATCH_USD.email);
+      notificationsMetrics.deliveryDuration.observe({ channel: 'email' }, (Date.now() - start) / 1000);
+    } catch {}
+  } catch (error: any) {
     recordCircuitFailure(destination);
+    const errMsg = error?.message ?? lastError ?? 'Unknown error';
+    // Ensure we have at least one timestamp; retryWithBackoff already pushed for each attempt
+    const timestamps =
+      attemptTimestamps.length > 0 ? attemptTimestamps : [Date.now()];
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'email',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: timestamps.length,
+      last_error: errMsg,
+      attempt_timestamps: timestamps,
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'email', reason: 'provider_error' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'email' }, (Date.now() - start) / 1000);
+    } catch {}
     throw new Error(`Circuit breaker: email delivery to ${destination} failed`);
   }
 }
@@ -226,9 +324,14 @@ export async function sendWebhook(
   subscription: Subscription,
   payload: NotificationPayload,
   attempt = 1,
-  logId?: number
+  logId?: number,
+  auditTimestamps?: number[]
 ): Promise<void> {
   const destination = subscription.destination;
+  const ts = auditTimestamps ?? [];
+  // Record attempt timestamp at entry (for every attempt, including retries)
+  ts.push(Date.now());
+
   if (!shouldAllowRequest(destination)) {
     console.warn(`[delivery] Circuit open for ${destination} — skipping webhook`);
     deadLetterQueue.push({
@@ -243,6 +346,22 @@ export async function sendWebhook(
       attempts: attempt,
       timestamp: Date.now(),
     });
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'webhook',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: attempt,
+      last_error: 'Circuit breaker open',
+      attempt_timestamps: [...ts],
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'webhook', reason: 'circuit_open' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'webhook' }, (Date.now() - ts[0]) / 1000);
+    } catch {}
     return;
   }
 
@@ -292,6 +411,22 @@ export async function sendWebhook(
       attempts: attempt,
       timestamp: Date.now(),
     });
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'webhook',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: attempt,
+      last_error: reason,
+      attempt_timestamps: [...ts],
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'webhook', reason: 'ssrf_rejected' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'webhook' }, (Date.now() - ts[0]) / 1000);
+    } catch {}
     return;
   }
 
@@ -329,6 +464,23 @@ export async function sendWebhook(
         status: 'success',
       });
       recordCircuitSuccess(destination);
+      safeCreateAudit({
+        invoice_id: payload.invoice.id,
+        trigger: payload.trigger,
+        recipient_address: payload.recipientAddress,
+        channel: 'webhook',
+        destination,
+        event_id: payload.eventId ?? null,
+        status: 'delivered',
+        attempts: attempt,
+        last_error: null,
+        attempt_timestamps: [...ts],
+      });
+      try {
+        notificationsMetrics.dispatchesTotal.inc({ channel: 'webhook', trigger: payload.trigger });
+        notificationsMetrics.costUsdTotal.inc({ channel: 'webhook', operation: 'dispatch' }, COST_PER_DISPATCH_USD.webhook);
+        notificationsMetrics.deliveryDuration.observe({ channel: 'webhook' }, (Date.now() - ts[0]) / 1000);
+      } catch {}
       return;
     }
 
@@ -357,6 +509,22 @@ export async function sendWebhook(
       timestamp: Date.now(),
     });
     recordCircuitFailure(destination);
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'webhook',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: attempt,
+      last_error: errorMessage,
+      attempt_timestamps: [...ts],
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'webhook', reason: 'http_error' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'webhook' }, (Date.now() - ts[0]) / 1000);
+    } catch {}
     return;
   }
 
@@ -371,7 +539,7 @@ export async function sendWebhook(
 
   const backoff = CONFIG.webhookBackoffBaseMs * 2 ** (attempt - 1);
   await delay(backoff);
-  await sendWebhook(subscription, payload, attempt + 1, id);
+  await sendWebhook(subscription, payload, attempt + 1, id, ts);
 }
 
 export async function sendSms(
@@ -384,8 +552,38 @@ export async function sendSms(
   }
 
   const destination = subscription.destination;
+  const attemptTimestamps: number[] = [];
+  const startSms = Date.now();
   if (!shouldAllowRequest(destination)) {
     console.warn(`[delivery] Circuit open for ${destination} — skipping SMS`);
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'sms',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: 1,
+      last_error: 'Circuit breaker open',
+      attempt_timestamps: [Date.now()],
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'sms', reason: 'circuit_open' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'sms' }, (Date.now() - startSms) / 1000);
+    } catch {}
+    deadLetterQueue.push({
+      channel: 'sms',
+      destination,
+      subscriptionId: subscription.id,
+      trigger: payload.trigger,
+      invoice: payload.invoice,
+      subject: payload.subject,
+      message: payload.message,
+      lastError: 'Circuit breaker open',
+      attempts: 1,
+      timestamp: Date.now(),
+    });
     return;
   }
 
@@ -397,9 +595,11 @@ export async function sendSms(
     `Due date: ${new Date(payload.invoice.due_date * 1000).toISOString()}`,
   ].join('\n');
 
+  let lastError: string | null = null;
   try {
     await retryWithBackoff(
       async () => {
+        attemptTimestamps.push(Date.now());
         await client.messages.create({
           to: subscription.destination,
           from: CONFIG.twilioFromNumber,
@@ -408,7 +608,11 @@ export async function sendSms(
       },
       {
         label: `sms to ${subscription.destination}`,
-        onDeadLetter: (lastError) => {
+        onRetry: (_attempt, error) => {
+          lastError = error;
+        },
+        onDeadLetter: (deadLetterError) => {
+          lastError = deadLetterError;
           deadLetterQueue.push({
             channel: 'sms',
             destination: subscription.destination,
@@ -417,7 +621,7 @@ export async function sendSms(
             invoice: payload.invoice,
             subject: payload.subject,
             message: payload.message,
-            lastError,
+            lastError: deadLetterError,
             attempts: CONFIG.maxWebhookRetry,
             timestamp: Date.now(),
           });
@@ -425,8 +629,43 @@ export async function sendSms(
       }
     );
     recordCircuitSuccess(destination);
-  } catch {
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'sms',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'delivered',
+      attempts: attemptTimestamps.length || 1,
+      last_error: null,
+      attempt_timestamps: attemptTimestamps.length ? attemptTimestamps : [Date.now()],
+    });
+    try {
+      notificationsMetrics.dispatchesTotal.inc({ channel: 'sms', trigger: payload.trigger });
+      notificationsMetrics.costUsdTotal.inc({ channel: 'sms', operation: 'dispatch' }, COST_PER_DISPATCH_USD.sms);
+      notificationsMetrics.deliveryDuration.observe({ channel: 'sms' }, (Date.now() - startSms) / 1000);
+    } catch {}
+  } catch (error: any) {
     recordCircuitFailure(destination);
+    const errMsg = error?.message ?? lastError ?? 'Unknown error';
+    const timestamps = attemptTimestamps.length ? attemptTimestamps : [Date.now()];
+    safeCreateAudit({
+      invoice_id: payload.invoice.id,
+      trigger: payload.trigger,
+      recipient_address: payload.recipientAddress,
+      channel: 'sms',
+      destination,
+      event_id: payload.eventId ?? null,
+      status: 'failed',
+      attempts: timestamps.length,
+      last_error: errMsg,
+      attempt_timestamps: timestamps,
+    });
+    try {
+      notificationsMetrics.failuresTotal.inc({ channel: 'sms', reason: 'provider_error' });
+      notificationsMetrics.deliveryDuration.observe({ channel: 'sms' }, (Date.now() - startSms) / 1000);
+    } catch {}
     throw new Error(`Circuit breaker: SMS delivery to ${destination} failed`);
   }
 }

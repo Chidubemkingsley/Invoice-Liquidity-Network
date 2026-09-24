@@ -34,15 +34,21 @@ Each row describes one outbound subscription:
 | `webhook_secret` | Optional HMAC signing secret for webhooks. |
 | `created_at` | Subscription creation timestamp. |
 
-### 1c. Delivery audit log (rows in `sent_notifications` and `webhook_delivery_logs`)
+### 1c. Delivery audit log (rows in `sent_notifications`, `webhook_delivery_logs`, and `delivery_audit_log`)
 
-These records exist for delivery-state correctness (de-duplication and transient-retry bookkeeping). They are not visible to users by default but are included in the export endpoint.
+These records support support/compliance investigations ("was this specific notification actually delivered, and when?") as a **durable, queryable audit log** independent of scattered application logs. Two kinds of records exist:
 
-**Data Retention & Archive**: 
+- **Transient dispatch-retry state** (`sent_notifications` for de-duplication and `webhook_delivery_logs` for retry bookkeeping) — may be cleared on restart and is not the source of truth for investigations.
+- **Durable delivery-confirmation audit log** (`delivery_audit_log`) — one row per delivery outcome (whether `delivered` or `failed`), with attempt timestamps, channel, and final status. This table is the source of truth for `GET /audit/deliveries` (by recipient, event, or time range) and for the CLI `query-audit` tool.
+
+They are not visible to users by default but are included in the export endpoint.
+
+**Data Retention & Archive** (enforced via `POST /audit/purge` and the scheduled purge job; see `purgeExpiredDeliveryLogs` in `notifications/src/db.ts`):
 - **Active preferences**: Until the user updates them, unsubscribes, or deletes the record.
 - **Subscriptions**: Deleted immediately on `DELETE /unsubscribe` or `POST /unsubscribe`.
-- **Delivery logs (`sent_notifications`)**: Retained for 30 days from `sent_at`, then purged.
-- **Webhook delivery logs**: Retained for 90 days.
+- **Delivery logs (`sent_notifications`)**: Retained for **30 days** from `sent_at`, then purged.
+- **Webhook delivery logs**: Retained for **90 days** from `created_at`, then purged.
+- **Delivery audit log (`delivery_audit_log`)**: Retained for **90 days** from `created_at`, then purged — consistent with webhook logs as the durable counterpart independent of retry state. Attempt timestamps and final status remain queryable within this window via `GET /audit/deliveries?recipient=...&eventId=...&start=...&end=...`.
 - Client-side notification history follows the frontend application's data retention practices.
 
 ---

@@ -1,0 +1,331 @@
+# ILN SLOs & multi-window, multi-burn-rate alerting
+#
+# Replaces static-threshold alerts (previously in oracle-service-alerts.yml and
+# monitoring.md Signal tables) with the production-grade MWMBR pattern.
+# Reference: Google SRE Workbook, Ch. 5 — "Alerting on SLOs".
+#
+# SLOs are defined for the three core user-facing paths:
+#   1. Indexer Read API         — 99.9% availability, p95 latency < 200ms over 28d
+#   2. Oracle Freshness         — 99.5% non-stale, p95 verification latency < 1s over 28d
+#   3. Notification Delivery    — 99.9% success, p95 delivery latency < 5s over 28d
+#
+# Error budgets:
+#   - 99.9% SLO → 0.1% budget → ~43m/month downtime/latency violation budget
+#   - 99.5% SLO → 0.5% budget → ~3.6h/month
+#
+# MWMBR windows (SRE standard):
+#   - Fast burn: 5m + 1h  (burn rate 14x for 99.9%, 6x for 99.5% → pages immediately)
+#   - Slow burn: 30m + 6h (burn rate 6x for 99.9%, 3x for 99.5% → tickets, not pages)
+#
+# Load alongside prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/rules/slo-alerts.yml
+#     - /etc/prometheus/rules/oracle-service-alerts.yml  # now houses fraud-specific, not generic SLO
+#
+# Retired: static thresholds like `syncLag > 60s` and `failure rate >5% over 15m`
+# have been removed. See monitoring.md for migration notes.
+
+groups:
+  - name: slo-indexer-read-api
+    interval: 30s
+    rules:
+      # Recording: error ratio and latency burn for indexer read path
+      - record: slo:indexer_availability:error_ratio_5m
+        expr: |
+          sum(rate(iln_http_errors_total[5m]))
+          /
+          clamp_min(sum(rate(iln_http_requests_total[5m])), 0.0001)
+
+      - record: slo:indexer_availability:error_ratio_30m
+        expr: |
+          sum(rate(iln_http_errors_total[30m]))
+          /
+          clamp_min(sum(rate(iln_http_requests_total[30m])), 0.0001)
+
+      - record: slo:indexer_availability:error_ratio_1h
+        expr: |
+          sum(rate(iln_http_errors_total[1h]))
+          /
+          clamp_min(sum(rate(iln_http_requests_total[1h])), 0.0001)
+
+      - record: slo:indexer_availability:error_ratio_6h
+        expr: |
+          sum(rate(iln_http_errors_total[6h]))
+          /
+          clamp_min(sum(rate(iln_http_requests_total[6h])), 0.0001)
+
+      - record: slo:indexer_latency:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(iln_http_request_duration_seconds_bucket[5m])) by (le))
+
+      # ── SLO: 99.9% availability (budget 0.001) ─────────────────────────────
+      # Fast burn: 14x over 5m+1h consumes 2% of monthly budget in 1h → page
+      - alert: IndexerAvailabilityFastBurn
+        expr: |
+          slo:indexer_availability:error_ratio_5m > (0.001 * 14)
+          and
+          slo:indexer_availability:error_ratio_1h > (0.001 * 14)
+        for: 5m
+        labels:
+          severity: critical
+          team: ops
+          component: indexer
+          slo: indexer-availability-99.9
+          burn: fast
+        annotations:
+          summary: "Indexer read API fast burn — {{ $value | humanizePercentage }} errors (14x) for 1h"
+          description: |
+            Burn rate 14x on 99.9% SLO. At this rate 2% of monthly error budget burns per hour.
+            Triage: check /metrics iln_http_errors_total, Stellar RPC health, and DB lock status.
+            Runbook: docs/monitoring.md#signal-2-indexer-lag
+
+      # Slow burn: 6x over 30m+6h → ticket
+      - alert: IndexerAvailabilitySlowBurn
+        expr: |
+          slo:indexer_availability:error_ratio_30m > (0.001 * 6)
+          and
+          slo:indexer_availability:error_ratio_6h > (0.001 * 6)
+        for: 30m
+        labels:
+          severity: warning
+          team: ops
+          component: indexer
+          slo: indexer-availability-99.9
+          burn: slow
+        annotations:
+          summary: "Indexer read API slow burn — {{ $value | humanizePercentage }} errors (6x) for 6h"
+          description: |
+            Slow sustained burn. 6x over 6h will exhaust monthly budget in ~5 days if not fixed.
+            Likely a slow regression, not an outage. Check recent deploys and p95 latency.
+
+      # Latency SLO: p95 < 200ms for 99% of requests (treated as 99.9% budget)
+      - alert: IndexerLatencyFastBurn
+        expr: |
+          histogram_quantile(0.95, sum(rate(iln_http_request_duration_seconds_bucket[5m])) by (le)) > 0.2
+          and
+          histogram_quantile(0.95, sum(rate(iln_http_request_duration_seconds_bucket[1h])) by (le)) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          team: ops
+          component: indexer
+          slo: indexer-latency-p95-200ms
+          burn: fast
+        annotations:
+          summary: "Indexer p95 latency >200ms for 1h ({{ $value | humanizeDuration }})"
+          description: "Read path latency SLI breached. Check iln_db_query_duration_seconds and RPC latency."
+
+      - alert: IndexerLatencySlowBurn
+        expr: |
+          histogram_quantile(0.95, sum(rate(iln_http_request_duration_seconds_bucket[30m])) by (le)) > 0.2
+          and
+          histogram_quantile(0.95, sum(rate(iln_http_request_duration_seconds_bucket[6h])) by (le)) > 0.2
+        for: 30m
+        labels:
+          severity: warning
+          team: ops
+          component: indexer
+          slo: indexer-latency-p95-200ms
+          burn: slow
+        annotations:
+          summary: "Indexer p95 latency sustained >200ms for 6h"
+          description: "Slow latency regression. Check DB query latency and event loop lag panels in unified dashboard."
+
+  - name: slo-oracle-freshness
+    interval: 30s
+    rules:
+      - record: slo:oracle_freshness:stale_ratio_5m
+        expr: |
+          sum(rate(oracle_stale_responses_total[5m]))
+          /
+          clamp_min(sum(rate(oracle_verification_requests_total[5m])), 0.0001)
+
+      - record: slo:oracle_freshness:stale_ratio_30m
+        expr: |
+          sum(rate(oracle_stale_responses_total[30m]))
+          /
+          clamp_min(sum(rate(oracle_verification_requests_total[30m])), 0.0001)
+
+      - record: slo:oracle_freshness:stale_ratio_1h
+        expr: |
+          sum(rate(oracle_stale_responses_total[1h]))
+          /
+          clamp_min(sum(rate(oracle_verification_requests_total[1h])), 0.0001)
+
+      - record: slo:oracle_freshness:stale_ratio_6h
+        expr: |
+          sum(rate(oracle_stale_responses_total[6h]))
+          /
+          clamp_min(sum(rate(oracle_verification_requests_total[6h])), 0.0001)
+
+      - record: slo:oracle_latency:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(oracle_verification_duration_seconds_bucket[5m])) by (le))
+
+      # ── SLO: 99.5% non-stale (budget 0.005) ────────────────────────────────
+      # Fast burn 6x, slow burn 3x (tuned for 99.5% budget)
+      - alert: OracleFreshnessFastBurn
+        expr: |
+          slo:oracle_freshness:stale_ratio_5m > (0.005 * 6)
+          and
+          slo:oracle_freshness:stale_ratio_1h > (0.005 * 6)
+        for: 5m
+        labels:
+          severity: critical
+          team: ops
+          component: oracle-service
+          slo: oracle-freshness-99.5
+          burn: fast
+        annotations:
+          summary: "Oracle freshness fast burn — stale ratio {{ $value | humanizePercentage }} (6x) for 1h"
+          description: |
+            6x burn on 99.5% SLO. Check indexer lag (iln_cursor_updated_at) and reputation contract reachability.
+            Correlation panel: Indexer Lag vs Oracle Stale Responses in unified dashboard.
+
+      - alert: OracleFreshnessSlowBurn
+        expr: |
+          slo:oracle_freshness:stale_ratio_30m > (0.005 * 3)
+          and
+          slo:oracle_freshness:stale_ratio_6h > (0.005 * 3)
+        for: 30m
+        labels:
+          severity: warning
+          team: ops
+          component: oracle-service
+          slo: oracle-freshness-99.5
+          burn: slow
+        annotations:
+          summary: "Oracle freshness slow burn — stale ratio {{ $value | humanizePercentage }} (3x) for 6h"
+          description: "Slow stale-data regression. Check ORACLE_MAX_ORACLE_AGE_MS and indexer sync health."
+
+      # Latency SLO: p95 < 1s
+      - alert: OracleLatencyFastBurn
+        expr: |
+          histogram_quantile(0.95, sum(rate(oracle_verification_duration_seconds_bucket[5m])) by (le)) > 1
+          and
+          histogram_quantile(0.95, sum(rate(oracle_verification_duration_seconds_bucket[1h])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: ops
+          component: oracle-service
+          slo: oracle-latency-p95-1s
+          burn: fast
+        annotations:
+          summary: "Oracle p95 verification latency >1s for 1h ({{ $value | humanizeDuration }})"
+          description: "Callers time out before oracle. Check indexer and Soroban RPC."
+
+      - alert: OracleLatencySlowBurn
+        expr: |
+          histogram_quantile(0.95, sum(rate(oracle_verification_duration_seconds_bucket[30m])) by (le)) > 1
+          and
+          histogram_quantile(0.95, sum(rate(oracle_verification_duration_seconds_bucket[6h])) by (le)) > 1
+        for: 30m
+        labels:
+          severity: warning
+          team: ops
+          component: oracle-service
+          slo: oracle-latency-p95-1s
+          burn: slow
+        annotations:
+          summary: "Oracle p95 latency sustained >1s for 6h"
+          description: "Slow latency drift. Check cache hit rate and external provider latency."
+
+  - name: slo-notification-delivery
+    interval: 30s
+    rules:
+      - record: slo:notifications_delivery:failure_ratio_5m
+        expr: |
+          sum(rate(iln_notifications_failures_total[5m]))
+          /
+          clamp_min(sum(rate(iln_notifications_dispatches_total[5m])), 0.0001)
+
+      - record: slo:notifications_delivery:failure_ratio_30m
+        expr: |
+          sum(rate(iln_notifications_failures_total[30m]))
+          /
+          clamp_min(sum(rate(iln_notifications_dispatches_total[30m])), 0.0001)
+
+      - record: slo:notifications_delivery:failure_ratio_1h
+        expr: |
+          sum(rate(iln_notifications_failures_total[1h]))
+          /
+          clamp_min(sum(rate(iln_notifications_dispatches_total[1h])), 0.0001)
+
+      - record: slo:notifications_delivery:failure_ratio_6h
+        expr: |
+          sum(rate(iln_notifications_failures_total[6h]))
+          /
+          clamp_min(sum(rate(iln_notifications_dispatches_total[6h])), 0.0001)
+
+      - record: slo:notifications_delivery:latency_p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(iln_notifications_delivery_duration_seconds_bucket[5m])) by (le))
+
+      # ── SLO: 99.9% delivery success (budget 0.001) ─────────────────────────
+      - alert: NotificationDeliveryFastBurn
+        expr: |
+          slo:notifications_delivery:failure_ratio_5m > (0.001 * 14)
+          and
+          slo:notifications_delivery:failure_ratio_1h > (0.001 * 14)
+        for: 5m
+        labels:
+          severity: critical
+          team: ops
+          component: notifications
+          slo: notification-delivery-99.9
+          burn: fast
+        annotations:
+          summary: "Notification delivery fast burn — failure ratio {{ $value | humanizePercentage }} (14x) for 1h"
+          description: |
+            14x burn on 99.9% SLO. Check iln_notifications_failures_total by channel/reason, provider health (/health/providers), and audit log (/audit/deliveries).
+            Fallback deliveries panel shows if degraded-mode routing is active.
+
+      - alert: NotificationDeliverySlowBurn
+        expr: |
+          slo:notifications_delivery:failure_ratio_30m > (0.001 * 6)
+          and
+          slo:notifications_delivery:failure_ratio_6h > (0.001 * 6)
+        for: 30m
+        labels:
+          severity: warning
+          team: ops
+          component: notifications
+          slo: notification-delivery-99.9
+          burn: slow
+        annotations:
+          summary: "Notification delivery slow burn — failure ratio {{ $value | humanizePercentage }} (6x) for 6h"
+          description: "Slow delivery degradation. Check webhook SSRF rejections and Resend/Twilio provider health."
+
+      # Latency SLO: p95 delivery latency < 5s (covers email/webhook/SMS)
+      - alert: NotificationLatencyFastBurn
+        expr: |
+          histogram_quantile(0.95, sum(rate(iln_notifications_delivery_duration_seconds_bucket[5m])) by (le)) > 5
+          and
+          histogram_quantile(0.95, sum(rate(iln_notifications_delivery_duration_seconds_bucket[1h])) by (le)) > 5
+        for: 10m
+        labels:
+          severity: warning
+          team: ops
+          component: notifications
+          slo: notification-latency-p95-5s
+          burn: fast
+        annotations:
+          summary: "Notification p95 delivery latency >5s for 1h ({{ $value | humanizeDuration }})"
+          description: "Delivery path latency breached. Check rate-limit rejections and fallback capacity."
+
+      - alert: NotificationLatencySlowBurn
+        expr: |
+          histogram_quantile(0.95, sum(rate(iln_notifications_delivery_duration_seconds_bucket[30m])) by (le)) > 5
+          and
+          histogram_quantile(0.95, sum(rate(iln_notifications_delivery_duration_seconds_bucket[6h])) by (le)) > 5
+        for: 30m
+        labels:
+          severity: warning
+          team: ops
+          component: notifications
+          slo: notification-latency-p95-5s
+          burn: slow
+        annotations:
+          summary: "Notification p95 latency sustained >5s for 6h"
+          description: "Slow latency burn. Correlation panel: Oracle Latency vs Notification Volume in unified dashboard may show cross-service cause."

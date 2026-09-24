@@ -15,6 +15,12 @@ export interface OracleMetrics {
   fraudFlagRatio: client.Gauge<string>;
   /** External provider lookups by resulting status. */
   externalVerificationTotal: client.Counter<string>;
+  /** Attributed cost in USD */
+  costUsdTotal: client.Counter<string>;
+  /** SLO error-budget burn rate */
+  sloErrorBudgetBurn: client.Gauge<string>;
+  /** Latency SLO violations */
+  latencySloViolationsTotal: client.Counter<string>;
   /** Record one verdict against the outcome, fraud and ratio metrics. */
   recordVerificationOutcome(result: VerificationOutcomeSample): void;
 }
@@ -99,6 +105,26 @@ export function createOracleMetrics(): OracleMetrics {
     registers: [registry],
   });
 
+  const costUsdTotal = new client.Counter({
+    name: 'oracle_cost_usd_total',
+    help: 'Attributed cost in USD by operation',
+    labelNames: ['operation'] as const,
+    registers: [registry],
+  });
+
+  const sloErrorBudgetBurn = new client.Gauge({
+    name: 'oracle_slo_error_budget_burn',
+    help: 'Current SLO error-budget burn rate by SLO name',
+    labelNames: ['slo'] as const,
+    registers: [registry],
+  });
+
+  const latencySloViolationsTotal = new client.Counter({
+    name: 'oracle_latency_slo_violations_total',
+    help: 'Count of verification latency SLO violations (p95 > threshold)',
+    registers: [registry],
+  });
+
   // Bounded ring of recent verdicts backing the ratio gauge.
   const recentFlags: boolean[] = [];
 
@@ -131,6 +157,18 @@ export function createOracleMetrics(): OracleMetrics {
     fraudFlagRatio.set(recentFlags.length === 0 ? 0 : flagged / recentFlags.length);
   }
 
+  // Cost attribution: $0.001 per verification (RPC + attestation)
+  function observeVerificationCost(): void {
+    try {
+      costUsdTotal.inc({ operation: 'verification' }, 0.001);
+    } catch {}
+  }
+
+  const wrappedRecordVerificationOutcome = (result: VerificationOutcomeSample): void => {
+    recordVerificationOutcome(result);
+    observeVerificationCost();
+  };
+
   return {
     registry,
     verificationTotal,
@@ -142,6 +180,9 @@ export function createOracleMetrics(): OracleMetrics {
     fraudSignalTotal,
     fraudFlagRatio,
     externalVerificationTotal,
-    recordVerificationOutcome,
+    costUsdTotal,
+    sloErrorBudgetBurn,
+    latencySloViolationsTotal,
+    recordVerificationOutcome: wrappedRecordVerificationOutcome,
   };
 }

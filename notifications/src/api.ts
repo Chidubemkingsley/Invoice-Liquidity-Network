@@ -11,6 +11,10 @@ import {
   getDeliveryAnalytics,
   getChannelComparison,
   getTrendAnalytics,
+  getDeliveryAuditLogs,
+  getDeliveryAuditLogById,
+  countDeliveryAuditLogs,
+  purgeExpiredDeliveryLogs,
 } from './db';
 import {
   ALLOWED_CHANNELS,
@@ -24,6 +28,10 @@ import {
 import type { NotificationTrigger } from './types';
 import { sendWebhook } from './delivery';
 import { createPreferencesRouter } from './preferences-api';
+import { digestScheduler, DigestScheduler } from './digest';
+import { preferencesService } from './preferences';
+import { notificationsMetrics } from './metrics';
+import { getAllProviderHealth } from './provider-health';
 
 interface SubscribeRequest {
   stellar_address: string;
@@ -68,6 +76,16 @@ export function createApp() {
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' });
+  });
+
+  app.get('/metrics', async (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', notificationsMetrics.registry.contentType);
+    res.end(await notificationsMetrics.registry.metrics());
+  });
+
+  // Provider health inspection — for drill verification and ops dashboards
+  app.get('/health/providers', (_req: Request, res: Response) => {
+    res.json({ providers: getAllProviderHealth() });
   });
 
   app.post('/subscribe', applyRateLimit, (req: Request, res: Response) => {
@@ -240,6 +258,86 @@ export function createApp() {
     const rawDays = typeof req.query.days === 'string' ? parseInt(req.query.days, 10) : 30;
     const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30;
     return res.json({ trends: getTrendAnalytics(days) });
+  });
+
+  // ── Delivery audit log (durable, queryable, independent of retry state) ─────
+  // Support / compliance investigations need to answer "was this notification
+  // actually delivered, and when" without scraping scattered application logs.
+  // The audit log is a durable, queryable record per delivery outcome.
+  app.get('/audit/deliveries', (req: Request, res: Response) => {
+    const {
+      recipient,
+      eventId,
+      trigger,
+      channel,
+      status,
+      start,
+      end,
+      limit: rawLimit,
+      offset: rawOffset,
+    } = req.query as Record<string, string | undefined>;
+
+    const filter: any = {};
+    if (recipient) filter.recipient = recipient;
+    if (eventId) filter.eventId = eventId;
+    if (trigger) filter.trigger = trigger;
+    if (channel) filter.channel = channel;
+    if (status) {
+      if (!['pending', 'delivered', 'failed'].includes(status)) {
+        return res.status(400).json({ error: 'status must be pending, delivered, or failed' });
+      }
+      filter.status = status;
+    }
+    if (start) {
+      const ms = Date.parse(start);
+      if (Number.isNaN(ms)) return res.status(400).json({ error: 'start must be ISO 8601 date' });
+      filter.startTime = ms;
+    }
+    if (end) {
+      const ms = Date.parse(end);
+      if (Number.isNaN(ms)) return res.status(400).json({ error: 'end must be ISO 8601 date' });
+      filter.endTime = ms;
+    }
+    if (rawLimit) {
+      const n = parseInt(rawLimit, 10);
+      if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'limit must be positive integer' });
+      filter.limit = Math.min(n, 1000);
+    }
+    if (rawOffset) {
+      const n = parseInt(rawOffset, 10);
+      if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'offset must be non-negative integer' });
+      filter.offset = n;
+    }
+
+    const records = getDeliveryAuditLogs(filter);
+    const total = countDeliveryAuditLogs(filter);
+    return res.json({ total, records });
+  });
+
+  app.get('/audit/deliveries/:id', (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid audit id' });
+    const record = getDeliveryAuditLogById(id);
+    if (!record) return res.status(404).json({ error: 'Audit record not found' });
+    return res.json({ record });
+  });
+
+  // Retention enforcement — consistent with docs/privacy.md (30d sent, 90d webhook/audit).
+  // Exposed for internal ops / CLI `purge-audit` and for scheduled job.
+  app.post('/audit/purge', (req: Request, res: Response) => {
+    const nowParam = (req.query.now as string | undefined) ?? (req.body as any)?.now;
+    const nowMs = nowParam ? Date.parse(nowParam) : Date.now();
+    if (Number.isNaN(nowMs)) return res.status(400).json({ error: 'now must be ISO 8601' });
+    const result = purgeExpiredDeliveryLogs(nowMs);
+    return res.json({ purged: result, retentionPolicy: { sentNotificationsDays: 30, webhookLogsDays: 90, auditLogsDays: 90 } });
+  });
+
+  app.get('/audit/stats', (_req: Request, res: Response) => {
+    const delivered = countDeliveryAuditLogs({ status: 'delivered' });
+    const failed = countDeliveryAuditLogs({ status: 'failed' });
+    const pending = countDeliveryAuditLogs({ status: 'pending' });
+    const total = countDeliveryAuditLogs();
+    return res.json({ total, delivered, failed, pending });
   });
 
   // Issue #718: digest preview endpoint — returns pending buffer items

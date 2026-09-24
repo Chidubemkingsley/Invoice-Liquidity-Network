@@ -11,6 +11,8 @@ import {
 } from './db';
 import { fetchInvoice } from './rpc';
 import { deliverNotification } from './delivery';
+import { deliverWithFallback } from './fallback';
+import { getProviderHealth } from './provider-health';
 import { digestScheduler, DigestScheduler } from './digest';
 import { preferencesService } from './preferences';
 import type { Invoice, ILNEventType, NotificationTrigger, InvoiceEvent } from './types';
@@ -257,20 +259,83 @@ async function dispatchNotifications(
       };
 
       try {
-        await deliverNotification(subscription, payload);
-        logSentNotification(
-          invoice.id,
-          trigger,
-          target.recipient,
-          subscription.channel,
-          subscription.destination,
-          eventId
-        );
+        // Check provider health and route via fallback if degraded, with
+        // priority-aware capacity handling. Critical alerts are never shed.
+        const health = getProviderHealth(subscription.channel as any);
+        if (health !== 'healthy') {
+          const fbResult = await deliverWithFallback(subscription, payload);
+          if (fbResult.success) {
+            const usedChannel = (fbResult.fallbackChannel as any) ?? subscription.channel;
+            // Find the actual destination used for the fallback channel
+            let usedDestination = subscription.destination;
+            if (fbResult.fallbackChannel) {
+              const fallbackSubs = getSubscriptionsByAddress(target.recipient).filter(
+                (s) => s.channel === fbResult.fallbackChannel && s.triggers.includes(trigger)
+              );
+              if (fallbackSubs.length > 0) usedDestination = fallbackSubs[0].destination;
+            }
+            logSentNotification(
+              invoice.id,
+              trigger,
+              target.recipient,
+              usedChannel,
+              usedDestination,
+              eventId
+            );
+          } else if (!fbResult.capacityAllowed) {
+            console.warn(
+              `[processor] Fallback capacity exhausted for ${trigger} to ${target.recipient} (priority ${fbResult.priority}) — shedding low-priority notification`
+            );
+          } else {
+            console.error(
+              `[processor] Failed to deliver notification for invoice ${invoice.id} to ${subscription.destination} via fallback:`,
+              fbResult.error
+            );
+          }
+        } else {
+          await deliverNotification(subscription, payload);
+          logSentNotification(
+            invoice.id,
+            trigger,
+            target.recipient,
+            subscription.channel,
+            subscription.destination,
+            eventId
+          );
+        }
       } catch (error) {
-        console.error(
-          `[processor] Failed to deliver notification for invoice ${invoice.id} to ${subscription.destination}:`,
-          error
-        );
+        // Direct delivery failure — try fallback as second chance for critical
+        try {
+          const fbResult = await deliverWithFallback(subscription, payload);
+          if (fbResult.success) {
+            const usedChannel = (fbResult.fallbackChannel as any) ?? subscription.channel;
+            let usedDestination = subscription.destination;
+            if (fbResult.fallbackChannel) {
+              const fallbackSubs = getSubscriptionsByAddress(target.recipient).filter(
+                (s) => s.channel === fbResult.fallbackChannel && s.triggers.includes(trigger)
+              );
+              if (fallbackSubs.length > 0) usedDestination = fallbackSubs[0].destination;
+            }
+            logSentNotification(
+              invoice.id,
+              trigger,
+              target.recipient,
+              usedChannel,
+              usedDestination,
+              eventId
+            );
+          } else {
+            console.error(
+              `[processor] Failed to deliver notification for invoice ${invoice.id} to ${subscription.destination}:`,
+              error
+            );
+          }
+        } catch (fallbackError) {
+          console.error(
+            `[processor] Failed to deliver notification for invoice ${invoice.id} to ${subscription.destination}:`,
+            fallbackError
+          );
+        }
       }
     }
   }
